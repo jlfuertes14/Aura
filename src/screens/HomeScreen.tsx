@@ -98,11 +98,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogoPress }) => {
           <View style={styles.headerBrandText}>
             <View style={styles.brandTitleRow}>
               <Text style={styles.brandTitle}>AURA</Text>
-              <View style={styles.proPill}>
-                <Text style={styles.proPillText}>LOSSLESS</Text>
-              </View>
             </View>
-            <Text style={styles.subGreeting}>{getGreeting()} • Audiophile Vault</Text>
+            <Text style={styles.subGreeting}>{getGreeting()}</Text>
           </View>
         </View>
         <Pressable
