@@ -21,34 +21,36 @@ const MainAppContent: React.FC = () => {
   const { downloadedTracks } = usePlayer();
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <StatusBar style="light" />
+    <View style={styles.root}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <StatusBar style="light" />
 
-      {/* Screen Views - Extended beneath the floating glass menu bar */}
-      <View style={styles.screenContainer}>
-        {activeTab === 'home' && <HomeScreen onLogoPress={() => setIsSplashVisible(true)} />}
-        {activeTab === 'search' && <SearchScreen />}
-        {activeTab === 'library' && <LibraryScreen />}
-      </View>
+        {/* Screen Views - Extended beneath the floating glass menu bar */}
+        <View style={styles.screenContainer}>
+          {activeTab === 'home' && <HomeScreen onLogoPress={() => setIsSplashVisible(true)} />}
+          {activeTab === 'search' && <SearchScreen />}
+          {activeTab === 'library' && <LibraryScreen />}
+        </View>
 
-      {/* Floating Glassmorphic Bottom Navigation Cluster */}
-      <View style={styles.floatingBottomCluster} pointerEvents="box-none">
-        <MiniPlayerBanner />
-        <BottomNav
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          downloadCount={downloadedTracks.length}
-        />
-      </View>
+        {/* Floating Glassmorphic Bottom Navigation Cluster */}
+        <View style={styles.floatingBottomCluster} pointerEvents="box-none">
+          <MiniPlayerBanner />
+          <BottomNav
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            downloadCount={downloadedTracks.length}
+          />
+        </View>
+
+        {/* Initial App Loading / Logo Launch Animation */}
+        {isSplashVisible && (
+          <AnimatedSplashScreen onAnimationComplete={() => setIsSplashVisible(false)} />
+        )}
+      </SafeAreaView>
 
       {/* Full-Screen Immersive Player Modal */}
       <FullScreenPlayer />
-
-      {/* Initial App Loading / Logo Launch Animation */}
-      {isSplashVisible && (
-        <AnimatedSplashScreen onAnimationComplete={() => setIsSplashVisible(false)} />
-      )}
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -63,6 +65,10 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,

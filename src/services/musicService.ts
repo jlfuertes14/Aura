@@ -1,5 +1,10 @@
-import { Track, ArtworkPalette } from '../types/music';
+import { Track, ArtworkPalette, SpotifyPlaylistResult } from '../types/music';
 import { getApiBaseUrl, fetchApiWithFallback } from './apiConfig';
+
+// Helper to construct companion streaming audio URLs
+export function getCuratedStreamUrl(videoId: string): string {
+  return `${getApiBaseUrl(5000)}/api/stream?id=${videoId}`;
+}
 
 // Curated local images bundled into the binary app
 export const LOCAL_IMAGES: Record<string, any> = {
@@ -15,8 +20,8 @@ export const LOCAL_IMAGES: Record<string, any> = {
 /**
  * Universal artwork resolver that works for:
  * 1. Bundled local assets (lofi_city, empty_library, etc.)
- * 2. Pre-existing cached HTTP URLs (e.g. localhost:5000/assets/images/...)
- * 3. Remote YouTube thumbnails (https://img.youtube.com/...)
+ * 2. Remote YouTube thumbnails (https://img.youtube.com/...)
+ * 3. Remote Spotify/CDN images
  * 4. Custom file system URIs (file:///...)
  */
 export function resolveArtworkSource(artworkUrl?: string | number | null): any {
@@ -40,126 +45,111 @@ export function resolveArtworkSource(artworkUrl?: string | number | null): any {
 
 export const EMPTY_LIBRARY_ARTWORK = 'empty_library';
 
-// Curated royalty-free tracks with bespoke high-fidelity cover artwork & streams
+// Curated authentic hit tracks with verified YouTube audio streams and synchronized LRCLIB lyrics
 export const CURATED_TRACKS: Track[] = [
   {
-    id: 'curated-1',
-    title: 'Midnight City Vibes',
-    artist: 'Lofi Dreamer',
-    album: 'Chillhop Horizons',
-    duration: 165,
-    artworkUrl: 'lofi_city',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
+    id: 'curated-paradise',
+    title: 'PARADISE',
+    artist: 'Chase Atlantic',
+    album: 'BEAUTY IN DEATH (Deluxe Edition)',
+    duration: 256,
+    artworkUrl: 'https://img.youtube.com/vi/4tijiFGhBN8/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=4tijiFGhBN8',
     isDownloaded: false,
-    source: 'curated',
-    genre: 'Lofi',
-    lyrics: [
-      'Neon lights through the rainy glass',
-      'Watching midnight shadows pass',
-      'Coffee brewing, tempo slow',
-      'Lost inside this gentle glow',
-      'Tape deck winding through the beat',
-      'Empty rhythm down the street',
-      'Let the city drift away',
-      'Waiting for another day',
-    ],
+    source: 'youtube',
+    genre: 'Alt R&B',
+    videoId: '4tijiFGhBN8',
   },
   {
-    id: 'curated-2',
-    title: 'Neon Odyssey',
-    artist: 'Cyberwave 84',
-    album: 'Retrogrid Future',
-    duration: 198,
-    artworkUrl: 'synthwave_grid',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=synthwave-80s-110045.mp3',
+    id: 'curated-blinding-lights',
+    title: 'Blinding Lights',
+    artist: 'The Weeknd',
+    album: 'After Hours',
+    duration: 200,
+    artworkUrl: 'https://img.youtube.com/vi/4NRXx6U8ABQ/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=4NRXx6U8ABQ',
     isDownloaded: false,
-    source: 'curated',
+    source: 'youtube',
     genre: 'Synthwave',
-    lyrics: [
-      'Accelerating past the digital line',
-      'Grid lines glowing in the summer time',
-      'Synthesizers pulse into the night',
-      'Chasing down the ultraviolet light',
-      'Chrome reflections in the rear-view mirror',
-      'Everything is getting clearer',
-      'Outrun the horizon, break the speed',
-      'Pure adrenaline is all we need',
-    ],
+    videoId: '4NRXx6U8ABQ',
   },
   {
-    id: 'curated-3',
-    title: 'Sunny Morning Acoustic',
-    artist: 'Oak & String',
-    album: 'Folk Reverie',
-    duration: 142,
-    artworkUrl: 'acoustic_morning',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=acoustic-guitars-ambient-10777.mp3',
+    id: 'curated-birds-of-a-feather',
+    title: 'BIRDS OF A FEATHER',
+    artist: 'Billie Eilish',
+    album: 'HIT ME HARD AND SOFT',
+    duration: 196,
+    artworkUrl: 'https://img.youtube.com/vi/d5gf9dXHevw/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=d5gf9dXHevw',
     isDownloaded: false,
-    source: 'curated',
-    genre: 'Acoustic',
-    lyrics: [
-      'Golden sunlight on the wooden floor',
-      'Gentle breeze through an open door',
-      'Strings are humming with a quiet tone',
-      'Peaceful moments that we call our own',
-      'Time moves gently like an autumn leaf',
-      'Finding solace in a calm belief',
-    ],
+    source: 'youtube',
+    genre: 'Alt Pop',
+    videoId: 'd5gf9dXHevw',
   },
   {
-    id: 'curated-4',
-    title: 'Deep Focus Ambience',
-    artist: 'Astral Flow',
-    album: 'Neural Waves',
-    duration: 210,
-    artworkUrl: 'ambient_astral',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f77348.mp3?filename=ambient-piano-amp-strings-10711.mp3',
+    id: 'curated-fein',
+    title: 'FE!N',
+    artist: 'Travis Scott',
+    album: 'UTOPIA',
+    duration: 191,
+    artworkUrl: 'https://img.youtube.com/vi/B9synWjqBn8/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=B9synWjqBn8',
     isDownloaded: false,
-    source: 'curated',
-    genre: 'Ambient',
-    lyrics: [
-      '[Instrumental Harmonic Drone]',
-      '[Subtle Ocean Resonances]',
-      '[Binaural Waveform Shifts]',
-      '[Deep Breath & Centering]',
-    ],
-  },
-  {
-    id: 'curated-5',
-    title: 'Electric Pulse Workout',
-    artist: 'Bass Overdrive',
-    album: 'Velocity Club',
-    duration: 185,
-    artworkUrl: 'edm_pulse',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_c340b10bc4.mp3?filename=electronic-future-beats-117997.mp3',
-    isDownloaded: false,
-    source: 'curated',
-    genre: 'EDM',
-    lyrics: [
-      'Push the limit, feel the drive',
-      'This is how we stay alive',
-      'Beat drop heavy on the floor',
-      'Energy is wanting more',
-      'One two three, accelerate!',
-    ],
-  },
-  {
-    id: 'curated-6',
-    title: 'Urban Sunset Groove',
-    artist: 'Velvet Soul',
-    album: 'Downtown Sessions',
-    duration: 174,
-    artworkUrl: 'hiphop_street',
-    audioUrl: 'https://cdn.pixabay.com/download/audio/2022/08/02/audio_884fe92c21.mp3?filename=groove-lofi-hip-hop-118833.mp3',
-    isDownloaded: false,
-    source: 'curated',
+    source: 'youtube',
     genre: 'Hip Hop',
-    lyrics: [
-      'Rooftop breeze as the sky turns red',
-      'Quiet rhythm inside my head',
-      'Soul chords ringing on the electric piano',
-      'Smooth like vinyl, easy and slow',
-    ],
+    videoId: 'B9synWjqBn8',
+  },
+  {
+    id: 'curated-505',
+    title: '505',
+    artist: 'Arctic Monkeys',
+    album: 'Favourite Worst Nightmare',
+    duration: 253,
+    artworkUrl: 'https://img.youtube.com/vi/qU9mHegkTc4/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=qU9mHegkTc4',
+    isDownloaded: false,
+    source: 'youtube',
+    genre: 'Indie Rock',
+    videoId: 'qU9mHegkTc4',
+  },
+  {
+    id: 'curated-snooze',
+    title: 'Snooze',
+    artist: 'SZA',
+    album: 'SOS',
+    duration: 201,
+    artworkUrl: 'https://img.youtube.com/vi/LDY_XyxSeLk/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=LDY_XyxSeLk',
+    isDownloaded: false,
+    source: 'youtube',
+    genre: 'R&B',
+    videoId: 'LDY_XyxSeLk',
+  },
+  {
+    id: 'curated-chemical',
+    title: 'Chemical',
+    artist: 'Post Malone',
+    album: 'AUSTIN',
+    duration: 184,
+    artworkUrl: 'https://img.youtube.com/vi/afm_Lq4sHlQ/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=afm_Lq4sHlQ',
+    isDownloaded: false,
+    source: 'youtube',
+    genre: 'Pop Rock',
+    videoId: 'afm_Lq4sHlQ',
+  },
+  {
+    id: 'curated-levitating',
+    title: 'Levitating',
+    artist: 'Dua Lipa',
+    album: 'Future Nostalgia',
+    duration: 203,
+    artworkUrl: 'https://img.youtube.com/vi/TUVcZfQe-Kw/hqdefault.jpg',
+    audioUrl: 'http://localhost:5000/api/stream?id=TUVcZfQe-Kw',
+    isDownloaded: false,
+    source: 'youtube',
+    genre: 'Dance Pop',
+    videoId: 'TUVcZfQe-Kw',
   },
 ];
 
@@ -276,6 +266,84 @@ export async function resolveYouTubeAudioStream(
       `Unable to extract audio from YouTube: ${err.message || 'Server connection timeout'}. Please ensure Metro or server is running.`
     );
   }
+}
+
+/**
+ * Fetches and extracts a Spotify playlist via the companion backend API.
+ * Returns parsed playlist metadata and tracks without requiring Spotify API credentials.
+ */
+export async function fetchSpotifyPlaylist(playlistUrl: string): Promise<SpotifyPlaylistResult> {
+  const apiPath = `/api/spotify/playlist?url=${encodeURIComponent(playlistUrl)}`;
+  console.log(`[SPOTIFY SERVICE] Fetching Spotify playlist:`, playlistUrl);
+
+  const response = await fetchApiWithFallback(apiPath);
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `Failed to fetch Spotify playlist (HTTP ${response.status})`);
+  }
+
+  const data = await response.json();
+  if (data.success && data.playlist) {
+    return data.playlist as SpotifyPlaylistResult;
+  }
+  throw new Error(data.error || 'Failed to parse Spotify playlist');
+}
+
+export interface MatchResolvedTrack {
+  videoId: string;
+  title: string;
+  artist: string;
+  duration: number;
+  audioUrl: string;
+  downloadUrl: string;
+  artworkUrl?: string;
+  palette?: ArtworkPalette;
+}
+
+/**
+ * Resolves a Spotify (or query-based) track to its YouTube audio stream counterpart on demand.
+ */
+export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrack> {
+  // If track already has a working YouTube videoId, we can directly stream it
+  if (track.videoId && track.source !== 'spotify') {
+    const audioUrl = `${getApiBaseUrl(5000)}/api/stream?id=${track.videoId}`;
+    const downloadUrl = `${getApiBaseUrl(5000)}/api/download?id=${track.videoId}&title=${encodeURIComponent(track.title)}`;
+    return {
+      videoId: track.videoId,
+      title: track.title,
+      artist: track.artist,
+      duration: track.duration,
+      audioUrl,
+      downloadUrl,
+      artworkUrl: track.artworkUrl,
+      palette: track.palette,
+    };
+  }
+
+  const query = `${track.artist} ${track.title}`.trim();
+  const apiPath = `/api/resolve?q=${encodeURIComponent(query)}&title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`;
+  console.log(`[RESOLVE SERVICE] Resolving audio stream for "${query}"`);
+
+  const response = await fetchApiWithFallback(apiPath);
+  if (!response.ok) {
+    throw new Error(`Server returned HTTP ${response.status} resolving track audio`);
+  }
+
+  const data = await response.json();
+  if (data.success && data.videoId) {
+    return {
+      videoId: data.videoId,
+      title: data.title || track.title,
+      artist: data.artist || track.artist,
+      duration: data.duration || track.duration,
+      audioUrl: data.audioUrl,
+      downloadUrl: data.downloadUrl,
+      artworkUrl: data.artworkUrl || track.artworkUrl,
+      palette: data.palette || track.palette,
+    };
+  }
+
+  throw new Error(data.error || 'Unable to resolve matching audio stream');
 }
 
 export { fetchRemoteArtworkPalette } from '../utils/artworkColors';

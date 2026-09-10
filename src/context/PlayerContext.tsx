@@ -15,7 +15,7 @@ import {
   getPlaylists,
   savePlaylists,
 } from '../services/storageService';
-import { CURATED_TRACKS } from '../services/musicService';
+import { CURATED_TRACKS, resolveTrackAudio, fetchSpotifyPlaylist } from '../services/musicService';
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -54,6 +54,7 @@ interface PlayerContextType {
   importLocalAudio: () => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<void>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
+  importSpotifyPlaylist: (url: string) => Promise<Playlist>;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -142,32 +143,62 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const playTrack = async (track: Track, newQueue?: Track[]) => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      
+
+      let activeTrack = track;
+
+      // On-demand YouTube audio resolver for Spotify or query-based tracks without audioUrl
+      if (!activeTrack.localUri && (!activeTrack.audioUrl || activeTrack.source === 'spotify')) {
+        setIsBuffering(true);
+        try {
+          const matched = await resolveTrackAudio(activeTrack);
+          if (matched) {
+            activeTrack = {
+              ...activeTrack,
+              audioUrl: matched.audioUrl,
+              videoId: matched.videoId,
+              duration: matched.duration || activeTrack.duration,
+              artworkUrl: matched.artworkUrl || activeTrack.artworkUrl,
+              palette: matched.palette || activeTrack.palette,
+            };
+          }
+        } catch (err) {
+          console.error('Failed to match YouTube stream for track:', err);
+        } finally {
+          setIsBuffering(false);
+        }
+      }
+
       // Update queue if provided
       if (newQueue && newQueue.length > 0) {
-        setQueue(newQueue);
-        originalQueueRef.current = newQueue;
-        const index = newQueue.findIndex((t) => t.id === track.id);
+        const mappedQueue = newQueue.map((t) => (t.id === activeTrack.id ? activeTrack : t));
+        setQueue(mappedQueue);
+        originalQueueRef.current = mappedQueue;
+        const index = mappedQueue.findIndex((t) => t.id === activeTrack.id);
         setQueueIndex(index >= 0 ? index : 0);
       } else {
-        const index = queueRef.current.findIndex((t) => t.id === track.id);
+        const index = queueRef.current.findIndex((t) => t.id === activeTrack.id);
         if (index >= 0) {
           setQueueIndex(index);
+          const updated = [...queueRef.current];
+          updated[index] = activeTrack;
+          setQueue(updated);
         } else {
-          const updated = [...queueRef.current, track];
+          const updated = [...queueRef.current, activeTrack];
           setQueue(updated);
           setQueueIndex(updated.length - 1);
         }
       }
 
-      setCurrentTrack(track);
+      setCurrentTrack(activeTrack);
       setPosition(0);
-      setDuration(track.duration || 0);
+      setDuration(activeTrack.duration || 0);
 
       // Check if track is downloaded locally on device
-      const audioUri = track.localUri || track.audioUrl;
-      await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true);
-      setIsPlaying(true);
+      const audioUri = activeTrack.localUri || activeTrack.audioUrl;
+      if (audioUri) {
+        await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true);
+        setIsPlaying(true);
+      }
     } catch (error) {
       console.error('Error playing track:', error);
     }
@@ -313,9 +344,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   const downloadTrack = async (track: Track) => {
-    if (track.isDownloaded) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-    // Track active download progress
     setActiveDownloads((prev) => ({
       ...prev,
       [track.id]: {
@@ -329,7 +359,20 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }));
 
     try {
-      const savedTrack = await downloadTrackToDevice(track, (progress) => {
+      let trackToDownload = track;
+      if (!trackToDownload.audioUrl || trackToDownload.source === 'spotify') {
+        const matched = await resolveTrackAudio(trackToDownload);
+        if (matched) {
+          trackToDownload = {
+            ...trackToDownload,
+            audioUrl: matched.downloadUrl || matched.audioUrl,
+            videoId: matched.videoId,
+            duration: matched.duration || trackToDownload.duration,
+          };
+        }
+      }
+
+      const savedTrack = await downloadTrackToDevice(trackToDownload, (progress) => {
         setActiveDownloads((prev) => ({
           ...prev,
           [track.id]: {
@@ -471,6 +514,25 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await savePlaylists(updated);
   };
 
+  const importSpotifyPlaylist = async (url: string): Promise<Playlist> => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const result = await fetchSpotifyPlaylist(url);
+    const newPlaylist: Playlist = {
+      id: `pl-spotify-${result.id}-${Date.now()}`,
+      name: result.name,
+      description: result.description || `Imported Spotify playlist (${result.trackCount} tracks)`,
+      coverUrl: result.coverUrl,
+      tracks: result.tracks,
+      isCustom: true,
+      spotifyUrl: url,
+    };
+    const updated = [newPlaylist, ...playlists];
+    setPlaylists(updated);
+    await savePlaylists(updated);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    return newPlaylist;
+  };
+
   const openPlayerModal = () => setIsPlayerModalVisible(true);
   const closePlayerModal = () => setIsPlayerModalVisible(false);
 
@@ -511,6 +573,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         importLocalAudio,
         createPlaylist,
         addTrackToPlaylist,
+        importSpotifyPlaylist,
       }}
     >
       {children}

@@ -20,7 +20,7 @@ export interface Track {
   localUri?: string; // local file path on device storage if downloaded
   fileSize?: string; // e.g. "4.2 MB"
   downloadDate?: string; // ISO date string
-  source: 'youtube' | 'curated' | 'local' | 'url';
+  source: 'youtube' | 'curated' | 'local' | 'url' | 'spotify';
   genre?: string;
   lyrics?: string[];
   palette?: ArtworkPalette;
@@ -28,6 +28,7 @@ export interface Track {
   lyricsOffset?: number;
   isCleanStudio?: boolean;
   studioTitle?: string;
+  spotifyUri?: string;
 }
 
 export interface Playlist {
@@ -37,6 +38,16 @@ export interface Playlist {
   coverUrl: string;
   tracks: Track[];
   isCustom?: boolean;
+  spotifyUrl?: string;
+}
+
+export interface SpotifyPlaylistResult {
+  id: string;
+  name: string;
+  description?: string;
+  coverUrl: string;
+  trackCount: number;
+  tracks: Track[];
 }
 
 export type RepeatMode = 'off' | 'all' | 'one';

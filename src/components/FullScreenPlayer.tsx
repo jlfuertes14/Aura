@@ -18,6 +18,7 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import {
   ChevronDown,
   Play,
@@ -439,11 +440,18 @@ export const FullScreenPlayer: React.FC = () => {
       visible={isPlayerModalVisible}
       animationType="slide"
       presentationStyle="fullScreen"
+      statusBarTranslucent={true}
+      hardwareAccelerated={true}
       onRequestClose={closePlayerModal}
     >
-      <SafeAreaView style={[styles.safeArea, { backgroundColor: pureBgColor }]}>
-        {/* Pure Song Background Color: No gradient to black */}
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: pureBgColor }]} />
+      <View style={[styles.rootContainer, { backgroundColor: pureBgColor }]}>
+        <StatusBar style={isLightBg ? 'dark' : 'light'} />
+        <SafeAreaView
+          style={[styles.safeArea, { backgroundColor: pureBgColor }]}
+          edges={['top', 'bottom', 'left', 'right']}
+        >
+          {/* Pure Song Background Color: No gradient to black */}
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: pureBgColor }]} pointerEvents="none" />
 
         {/* Top Header */}
         <View style={styles.header}>
@@ -628,6 +636,7 @@ export const FullScreenPlayer: React.FC = () => {
         {/* Tab Content: Player */}
         {activeTab === 'player' && (
           <ScrollView
+            style={styles.tabScrollView}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
@@ -835,6 +844,7 @@ export const FullScreenPlayer: React.FC = () => {
         {activeTab === 'lyrics' && (
           <ScrollView
             ref={lyricsScrollRef}
+            style={styles.tabScrollView}
             contentContainerStyle={styles.lyricsContainer}
             showsVerticalScrollIndicator={false}
             onLayout={(e) => {
@@ -1001,7 +1011,11 @@ export const FullScreenPlayer: React.FC = () => {
 
         {/* Tab Content: Up Next Queue */}
         {activeTab === 'queue' && (
-          <ScrollView contentContainerStyle={styles.queueContainer}>
+          <ScrollView
+            style={styles.tabScrollView}
+            contentContainerStyle={styles.queueContainer}
+            showsVerticalScrollIndicator={false}
+          >
             <Text style={[styles.queueHeader, { color: '#FFFFFF' }]}>Up Next in Queue</Text>
             {queue.map((track, idx) => {
               const isCurrent = track.id === currentTrack.id;
@@ -1046,15 +1060,38 @@ export const FullScreenPlayer: React.FC = () => {
             })}
           </ScrollView>
         )}
-      </SafeAreaView>
+        </SafeAreaView>
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  rootContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: colors.background,
+    ...(Platform.OS === 'web'
+      ? {
+          position: 'fixed' as any,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 99999,
+        }
+      : {}),
+  },
   safeArea: {
     flex: 1,
+    width: '100%',
+    height: '100%',
     backgroundColor: colors.background,
+  },
+  tabScrollView: {
+    flex: 1,
+    width: '100%',
   },
   header: {
     flexDirection: 'row',

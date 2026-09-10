@@ -629,6 +629,217 @@ function handleApiRequest(req, res, next) {
     return;
   }
 
+  // 7. Spotify Playlist Importer endpoint: /api/spotify/playlist?url=...
+  if (parsedUrl.pathname === '/api/spotify/playlist') {
+    const rawUrl = parsedUrl.searchParams.get('url') || '';
+    const match = rawUrl.match(/(?:playlist\/|spotify:playlist:)([a-zA-Z0-9]+)/);
+
+    if (!match) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid Spotify playlist URL or ID' }));
+      return;
+    }
+
+    const playlistId = match[1];
+    const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
+    console.log(`[SPOTIFY IMPORT] Extracting playlist ID: ${playlistId}`);
+
+    fetch(embedUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    })
+      .then((r) => r.text())
+      .then((html) => {
+        const scriptRegex = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/;
+        const scriptMatch = html.match(scriptRegex);
+
+        if (!scriptMatch) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Could not extract Spotify playlist metadata' }));
+          return;
+        }
+
+        const data = JSON.parse(scriptMatch[1]);
+        const entity = data.props?.pageProps?.state?.data?.entity;
+
+        if (!entity) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Playlist entity not found or playlist is private' }));
+          return;
+        }
+
+        const playlistName = entity.name || 'Spotify Playlist';
+        const coverUrl =
+          entity.visualIdentity?.image?.[0]?.url ||
+          entity.images?.[0]?.url ||
+          '';
+        const rawTracks = entity.trackList || [];
+
+        const proto = req.headers['x-forwarded-proto'] || 'http';
+        const currentHost = req.headers.host || `${getLocalIp()}:8081`;
+        const baseUrl = `${proto}://${currentHost}`;
+
+        const tracks = rawTracks.map((item, idx) => {
+          const trackTitle = item.title || 'Track';
+          const trackArtist = item.subtitle || 'Various Artists';
+          const durationSec = Math.round((item.duration || 180000) / 1000);
+          return {
+            id: `sp-${playlistId}-${idx}-${Date.now()}`,
+            title: trackTitle,
+            artist: trackArtist,
+            album: playlistName,
+            duration: durationSec,
+            artworkUrl: coverUrl,
+            audioUrl: '', // Resolved on-demand when clicked
+            isDownloaded: false,
+            source: 'spotify',
+            spotifyUri: item.uri || '',
+          };
+        });
+
+        console.log(`[SPOTIFY IMPORT] Successfully parsed "${playlistName}" with ${tracks.length} tracks`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            success: true,
+            playlist: {
+              id: playlistId,
+              name: playlistName,
+              description: entity.description || `Imported Spotify playlist (${tracks.length} tracks)`,
+              coverUrl,
+              trackCount: tracks.length,
+              tracks,
+            },
+          })
+        );
+      })
+      .catch((err) => {
+        console.error('[SPOTIFY IMPORT ERROR]:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message || 'Failed to import Spotify playlist' }));
+      });
+    return;
+  }
+
+  // 8. On-Demand Track Matchmaker & Stream Resolver: /api/resolve?q=...
+  if (parsedUrl.pathname === '/api/resolve') {
+    const rawQuery = parsedUrl.searchParams.get('q') || '';
+    const artist = parsedUrl.searchParams.get('artist') || '';
+    const title = parsedUrl.searchParams.get('title') || '';
+
+    const cleanQuery = (rawQuery || `${artist} ${title}`).replace(/[^\w\s-]/gi, ' ').trim();
+
+    if (!cleanQuery) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing search query (?q=...)' }));
+      return;
+    }
+
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    const currentHost = req.headers.host || `${getLocalIp()}:8081`;
+    const baseUrl = `${proto}://${currentHost}`;
+
+    // Cache resolver results to disk for zero-latency instant replays
+    const hash = Buffer.from(cleanQuery.toLowerCase()).toString('hex').slice(0, 32);
+    const resolveCacheFile = path.join(CACHE_DIR, `match_${hash}.json`);
+
+    if (fs.existsSync(resolveCacheFile)) {
+      try {
+        const cached = JSON.parse(fs.readFileSync(resolveCacheFile, 'utf8'));
+        if (cached && cached.videoId) {
+          cached.audioUrl = `${baseUrl}/api/stream?id=${cached.videoId}`;
+          cached.downloadUrl = `${baseUrl}/api/download?id=${cached.videoId}&title=${encodeURIComponent(cached.title || 'track')}`;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(cached));
+          return;
+        }
+      } catch (e) {}
+    }
+
+    console.log(`[RESOLVE TRACK] Matchmaking YouTube audio for: "${cleanQuery}"`);
+
+    const child = spawn('python', [
+      '-m',
+      'yt_dlp',
+      '--skip-download',
+      '--dump-json',
+      `ytsearch1:${cleanQuery} audio`,
+    ]);
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (d) => {
+      stdout += d.toString();
+    });
+    child.stderr.on('data', (d) => {
+      stderr += d.toString();
+    });
+
+    child.on('close', (code) => {
+      if (code === 0 && stdout.trim()) {
+        try {
+          const ytData = JSON.parse(stdout.trim());
+          const videoId = ytData.display_id || ytData.id;
+
+          if (!videoId) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'No matching YouTube video found' }));
+            return;
+          }
+
+          resolveStudioAudio(videoId).then(async (studioInfo) => {
+            const isClean = !!(studioInfo && studioInfo.cleanStudioResolved);
+            const targetVideoId = (isClean && studioInfo.studioVideoId) ? studioInfo.studioVideoId : videoId;
+
+            let palette = null;
+            try {
+              palette = await getArtworkPalette(targetVideoId);
+            } catch (e) {}
+
+            const result = {
+              success: true,
+              videoId: targetVideoId,
+              originalVideoId: videoId,
+              title: studioInfo?.studioTitle || ytData.title || title || 'Audio Track',
+              artist: ytData.artist || ytData.uploader || artist || 'Artist',
+              duration: studioInfo?.studioDuration || ytData.duration || 210,
+              audioUrl: `${baseUrl}/api/stream?id=${targetVideoId}`,
+              downloadUrl: `${baseUrl}/api/download?id=${targetVideoId}&title=${encodeURIComponent(studioInfo?.studioTitle || ytData.title || 'track')}`,
+              artworkUrl: `https://img.youtube.com/vi/${targetVideoId}/hqdefault.jpg`,
+              palette: palette || undefined,
+            };
+
+            try {
+              fs.writeFileSync(resolveCacheFile, JSON.stringify(result, null, 2));
+            } catch (e) {}
+
+            console.log(`[RESOLVE TRACK] Matched "${cleanQuery}" -> ${targetVideoId} ("${result.title}")`);
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          });
+          return;
+        } catch (err) {
+          console.error('[RESOLVE PARSE ERROR]:', err);
+        }
+      }
+
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to resolve YouTube audio stream for query' }));
+    });
+
+    child.on('error', (err) => {
+      console.error('[RESOLVE EXEC ERROR]:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    });
+
+    return;
+  }
+
   // If next is provided (Metro middleware), hand over unhandled routes
   if (typeof next === 'function') {
     return next();
