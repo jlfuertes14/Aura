@@ -511,43 +511,88 @@ function handleApiRequest(req, res, next) {
       title = hyphenMatch.slice(1).join(' - ').trim();
     }
 
-    // Clean noise
-    title = title.replace(/\s*[\(\[](official\s*(music\s*)?video|lyrics?|audio|official|visualizer|hd|4k|mv|remastered|explicit)[\)\]]/gi, '').trim();
-    artist = artist.replace(/\s*[\(\[](official\s*(music\s*)?video|lyrics?|audio|official|visualizer|hd|4k|mv|remastered|explicit)[\)\]]/gi, '').trim();
+    // Clean noise and YouTube-specific artifacts (e.g. "Chase Atlantic - Topic" -> "Chase Atlantic")
+    function cleanName(str) {
+      if (!str) return '';
+      return str
+        .replace(/\s*[-–—]?\s*Topic$/i, '')
+        .replace(/\s*[-–—]?\s*VEVO$/i, '')
+        .replace(/([a-z0-9])VEVO$/i, '$1')
+        .replace(/\s*[-–—]?\s*Official\s*(Music\s*)?(Channel|Page)?$/i, '')
+        .replace(/\s*[\(\[](official\s*(music\s*)?video|lyrics?|audio|official|visualizer|hd|4k|mv|remastered|explicit|clean)[\)\]]/gi, '')
+        .replace(/\s*[\(\[](feat\.|ft\.|featuring).*?[\)\]]/gi, '')
+        .replace(/\s*(feat\.|ft\.|featuring)\s+[^\-\(\[]+/gi, '')
+        .replace(/^[0-9]+\.\s*/, '')
+        .trim();
+    }
+
+    title = cleanName(title);
+    artist = cleanName(artist);
 
     console.log(`[LYRICS PROXY] Searching for: artist="${artist}", title="${title}"`);
 
     async function fetchLrclib() {
-      // 1. Try exact match
-      const url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}${duration ? `&duration=${Math.round(duration)}` : ''}`;
+      const headers = {
+        'User-Agent': 'MusicPlayerApp/1.0 (Node; https://github.com/expo/music-player)',
+        'Lrclib-Client': 'MusicPlayerApp/1.0',
+      };
+
+      // 1. Try exact match WITHOUT duration first (highest hit rate on LRCLIB)
+      const urlWithoutDur = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}`;
       try {
-        const response = await fetch(url, {
-          headers: { 'User-Agent': 'MusicPlayerApp/1.0 (Node)' }
-        });
+        const response = await fetch(urlWithoutDur, { headers });
         if (response.ok) {
-          return await response.json();
+          const json = await response.json();
+          if (json && (json.syncedLyrics || json.plainLyrics)) return json;
         }
       } catch (e) {
-        console.warn('[LYRICS] Exact match failed:', e.message);
+        console.warn('[LYRICS] Exact match without duration failed:', e.message);
       }
 
-      // 2. Try search query with extracted artist & title
+      // 1b. If duration is available, try exact match with duration
+      if (duration) {
+        try {
+          const urlWithDur = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}&duration=${Math.round(duration)}`;
+          const response = await fetch(urlWithDur, { headers });
+          if (response.ok) {
+            const json = await response.json();
+            if (json && (json.syncedLyrics || json.plainLyrics)) return json;
+          }
+        } catch {}
+      }
+
+      // 2. Try search query with cleaned artist & title
       const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(`${artist} ${title}`.trim())}`;
       try {
-        const searchRes = await fetch(searchUrl, {
-          headers: { 'User-Agent': 'MusicPlayerApp/1.0 (Node)' }
-        });
+        const searchRes = await fetch(searchUrl, { headers });
         if (searchRes.ok) {
           const list = await searchRes.json();
           if (Array.isArray(list) && list.length > 0) {
-            return list.find(item => item.syncedLyrics) || list[0];
+            const match = list.find(item => item.syncedLyrics) || list[0];
+            if (match) return match;
           }
         }
       } catch (e) {
         console.warn('[LYRICS] Search query failed:', e.message);
       }
 
-      // 3. Fallback to lyrics.ovh for plain text
+      // 3. Try search query with track title only
+      try {
+        const titleSearchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(title)}`;
+        const titleSearchRes = await fetch(titleSearchUrl, { headers });
+        if (titleSearchRes.ok) {
+          const list = await titleSearchRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            const lowerArtist = artist.toLowerCase();
+            const closeMatch = list.find(item => item.artistName && item.artistName.toLowerCase().includes(lowerArtist) && item.syncedLyrics);
+            if (closeMatch) return closeMatch;
+            const anySynced = list.find(item => item.syncedLyrics);
+            if (anySynced) return anySynced;
+          }
+        }
+      } catch (e) {}
+
+      // 4. Fallback to lyrics.ovh for plain text
       try {
         const ovhUrl = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
         const ovhRes = await fetch(ovhUrl);

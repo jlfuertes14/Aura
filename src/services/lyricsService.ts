@@ -50,9 +50,14 @@ export function resolveTrackVideoId(track: { id?: string; videoId?: string; audi
 export function cleanMusicString(text: string): string {
   if (!text) return '';
   return text
-    .replace(/\s*[\(\[](official\s*(music\s*)?video|lyrics?|audio|official|visualizer|hd|4k|mv|remastered|explicit)[\)\]]/gi, '')
+    .replace(/\s*[-–—]?\s*Topic$/i, '')
+    .replace(/\s*[-–—]?\s*VEVO$/i, '')
+    .replace(/([a-z0-9])VEVO$/i, '$1')
+    .replace(/\s*[-–—]?\s*Official\s*(Music\s*)?(Channel|Page)?$/i, '')
+    .replace(/\s*[\(\[](official\s*(music\s*)?video|lyrics?|audio|official|visualizer|hd|4k|mv|remastered|explicit|clean)[\)\]]/gi, '')
     .replace(/\s*[\(\[](feat\.|ft\.|featuring).*?[\)\]]/gi, '')
     .replace(/\s*(feat\.|ft\.|featuring)\s+[^\-\(\[]+/gi, '')
+    .replace(/^[0-9]+\.\s*/, '')
     .trim();
 }
 
@@ -111,8 +116,8 @@ export function extractArtistAndTitle(rawTitle: string, rawArtist: string): { ti
   // Check if title has "Artist - Track"
   const hyphenMatches = cleanedTitle.split(/\s+[-–—:]\s+/);
   if (hyphenMatches.length >= 2) {
-    const extractedArtist = hyphenMatches[0].trim();
-    const extractedTitle = hyphenMatches.slice(1).join(' - ').trim();
+    const extractedArtist = cleanMusicString(hyphenMatches[0]);
+    const extractedTitle = cleanMusicString(hyphenMatches.slice(1).join(' - '));
     if (extractedArtist && extractedTitle) {
       return {
         artist: extractedArtist,
@@ -166,15 +171,13 @@ export async function fetchLyrics(
       };
 
       try {
+        // 1. Try exact match without duration first (much higher hit rate on LRCLIB)
         let url = `https://lrclib.net/api/get?track_name=${encodeURIComponent(cleanTitle)}&artist_name=${encodeURIComponent(cleanArtist)}`;
-        if (duration && duration > 0) {
-          url += `&duration=${Math.round(duration)}`;
-        }
-
-        const res = await fetch(url, { headers });
+        let res = await fetch(url, { headers });
         if (res.ok) {
           data = await res.json();
-        } else if (res.status === 404) {
+        } else {
+          // 2. Try general search: "${cleanArtist} ${cleanTitle}"
           const query = `${cleanArtist} ${cleanTitle}`.trim();
           const searchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`;
           const searchRes = await fetch(searchUrl, { headers });
@@ -182,6 +185,20 @@ export async function fetchLyrics(
             const searchResults = await searchRes.json();
             if (Array.isArray(searchResults) && searchResults.length > 0) {
               data = searchResults.find((item: any) => item.syncedLyrics) || searchResults[0];
+            }
+          }
+
+          // 3. Try title only search if still no data
+          if (!data && cleanTitle) {
+            const titleSearchUrl = `https://lrclib.net/api/search?q=${encodeURIComponent(cleanTitle)}`;
+            const titleSearchRes = await fetch(titleSearchUrl, { headers });
+            if (titleSearchRes.ok) {
+              const titleResults = await titleSearchRes.json();
+              if (Array.isArray(titleResults) && titleResults.length > 0) {
+                const lowerArtist = cleanArtist.toLowerCase();
+                data = titleResults.find((item: any) => item.artistName && item.artistName.toLowerCase().includes(lowerArtist) && item.syncedLyrics) ||
+                       titleResults.find((item: any) => item.syncedLyrics);
+              }
             }
           }
         }

@@ -27,6 +27,7 @@ import { AntDesign } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { usePlayer } from '../context/PlayerContext';
 import { CURATED_TRACKS, getYouTubeMetadata, resolveYouTubeAudioStream, resolveArtworkSource, YouTubeInfo } from '../services/musicService';
+import { extractArtistAndTitle } from '../services/lyricsService';
 import { Track } from '../types/music';
 import { TrackListItem } from '../components/TrackListItem';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
@@ -61,7 +62,12 @@ export const SearchScreen: React.FC = () => {
       try {
         const meta = await getYouTubeMetadata(text);
         if (meta) {
-          setYtPreview(meta);
+          const cleaned = extractArtistAndTitle(meta.title, meta.author);
+          setYtPreview({
+            ...meta,
+            title: cleaned.title || meta.title,
+            author: cleaned.artist || meta.author,
+          });
           setYtStatusMessage('Ready to download');
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         }
@@ -99,10 +105,11 @@ export const SearchScreen: React.FC = () => {
       }
 
       // 2. Build Track object with extracted cover palette and studio audio metadata
+      const cleanMeta = extractArtistAndTitle(ytPreview.title, ytPreview.author);
       const track: Track = {
         id: `yt-${ytPreview.videoId}-${Date.now()}`,
-        title: ytPreview.title,
-        artist: ytPreview.author,
+        title: cleanMeta.title || ytPreview.title,
+        artist: cleanMeta.artist || ytPreview.author,
         album: 'YouTube Downloads',
         duration: streamData.studioDuration || 210,
         artworkUrl: ytPreview.thumbnailUrl,
