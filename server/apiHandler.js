@@ -178,11 +178,19 @@ function ensureAudioCached(videoId) {
       '-o',
       tempFile,
       '--no-playlist',
-      '--quiet',
       '-f',
       'ba[ext=m4a]/ba/b',
+      '--extractor-args',
+      'youtube:player_client=ios,android,web',
+      '--socket-timeout',
+      '15',
       ytUrl,
     ]);
+
+    let stderr = '';
+    child.stderr.on('data', (d) => {
+      stderr += d.toString();
+    });
 
     child.on('close', (code) => {
       activeDownloads.delete(videoId);
@@ -201,6 +209,9 @@ function ensureAudioCached(videoId) {
       } else {
         if (fs.existsSync(tempFile)) {
           try { fs.unlinkSync(tempFile); } catch (e) {}
+        }
+        if (stderr) {
+          console.warn(`[CACHE NOTICE] yt-dlp stderr for ${videoId}:`, stderr.slice(0, 300));
         }
         reject(new Error(`yt-dlp download failed with code ${code}`));
       }
@@ -391,44 +402,42 @@ function handleApiRequest(req, res, next) {
       return;
     }
 
-    resolveStudioAudio(videoId).then((studioInfo) => {
-      const targetVideoId = (studioInfo && studioInfo.cleanStudioResolved && studioInfo.studioVideoId)
-        ? studioInfo.studioVideoId
-        : videoId;
+    const targetVideoId = videoId;
+    const cacheFile = path.join(CACHE_DIR, `${targetVideoId}.m4a`);
+    if (fs.existsSync(cacheFile) && fs.statSync(cacheFile).size > 100000) {
+      return serveAudioFile(cacheFile, req, res);
+    }
 
-      const cacheFile = path.join(CACHE_DIR, `${targetVideoId}.m4a`);
-      if (fs.existsSync(cacheFile) && fs.statSync(cacheFile).size > 100000) {
-        return serveAudioFile(cacheFile, req, res);
-      }
-
-      // Ensure clean audio is cached and served with HTTP 206 support
-      ensureAudioCached(targetVideoId)
-        .then((savedPath) => {
-          serveAudioFile(savedPath, req, res);
-        })
-        .catch((err) => {
-          console.error('[STREAM ERROR] Fallback to live pipe:', err);
-          const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
-          const child = spawn(PYTHON_BIN, [
-            '-m',
-            'yt_dlp',
-            '-o',
-            '-',
-            '--no-playlist',
-            '--quiet',
-            '-f',
-            'ba[ext=m4a]/ba/b',
-            ytUrl,
-          ]);
-          res.writeHead(200, {
-            'Content-Type': 'audio/mp4',
-            'Accept-Ranges': 'bytes',
-            'Cache-Control': 'no-cache',
-          });
-          child.stdout.pipe(res);
-          req.on('close', () => child.kill('SIGTERM'));
+    // Ensure audio is cached on disk for seeking support; fallback to live pipe
+    ensureAudioCached(targetVideoId)
+      .then((savedPath) => {
+        serveAudioFile(savedPath, req, res);
+      })
+      .catch((err) => {
+        console.error('[STREAM ERROR] Fallback to live pipe:', err.message || err);
+        const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
+        const child = spawn(PYTHON_BIN, [
+          '-m',
+          'yt_dlp',
+          '-o',
+          '-',
+          '--no-playlist',
+          '-f',
+          'ba[ext=m4a]/ba/b',
+          '--extractor-args',
+          'youtube:player_client=ios,android,web',
+          '--socket-timeout',
+          '15',
+          ytUrl,
+        ]);
+        res.writeHead(200, {
+          'Content-Type': 'audio/mp4',
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache',
         });
-    });
+        child.stdout.pipe(res);
+        req.on('close', () => child.kill('SIGTERM'));
+      });
     return;
   }
 
