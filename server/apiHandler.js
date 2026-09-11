@@ -786,13 +786,31 @@ function handleApiRequest(req, res, next) {
     return;
   }
 
-  // 8. On-Demand Track Matchmaker & Stream Resolver: /api/resolve?q=...
+  // 8. On-Demand Track Matchmaker & Stream Resolver: /api/resolve
   if (parsedUrl.pathname === '/api/resolve') {
     const rawQuery = parsedUrl.searchParams.get('q') || '';
-    const artist = parsedUrl.searchParams.get('artist') || '';
-    const title = parsedUrl.searchParams.get('title') || '';
+    const rawArtist = parsedUrl.searchParams.get('artist') || '';
+    const rawTitle = parsedUrl.searchParams.get('title') || '';
 
-    const cleanQuery = (rawQuery || `${artist} ${title}`).replace(/[^\w\s-]/gi, ' ').trim();
+    // Smart cleaning: Extract primary artist and pure song title to avoid huge queries
+    const cleanArtist = (rawArtist || '').split(/[,&/]|feat\.?|ft\.?/i)[0].trim();
+    const cleanTitle = (rawTitle || '')
+      .replace(/\s*[\(\[](feat\.?|ft\.?|with|from|remix|official|audio)[^\)\]]*[\)\]]/gi, '')
+      .replace(/\s*-\s*(from|theme|soundtrack).*/gi, '')
+      .trim();
+
+    let cleanQuery = '';
+    if (cleanArtist && cleanTitle) {
+      cleanQuery = `${cleanArtist} ${cleanTitle}`;
+    } else if (cleanTitle) {
+      cleanQuery = cleanTitle;
+    } else {
+      cleanQuery = (rawQuery || `${rawArtist} ${rawTitle}`)
+        .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, ' ')
+        .replace(/[^\w\s-]/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
 
     if (!cleanQuery) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -821,15 +839,29 @@ function handleApiRequest(req, res, next) {
       } catch (e) {}
     }
 
-    console.log(`[RESOLVE TRACK] Matchmaking YouTube audio for: "${cleanQuery}"`);
+    console.log(`[RESOLVE TRACK] Fast matchmaking for: "${cleanQuery}"`);
 
-    const child = spawn(PYTHON_BIN, [
+    // Use --flat-playlist for ultra-fast single-pass metadata extraction without downloading webpage
+    const ytArgs = [
       '-m',
       'yt_dlp',
+      '--default-search',
+      'ytsearch1',
       '--skip-download',
       '--dump-json',
+      '--flat-playlist',
+      '--no-playlist',
+      '--socket-timeout',
+      '8',
       `ytsearch1:${cleanQuery} audio`,
-    ]);
+    ];
+
+    const child = spawn(PYTHON_BIN, ytArgs);
+    const killTimeout = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch (e) {}
+    }, 12000);
 
     let stdout = '';
     let stderr = '';
@@ -842,64 +874,55 @@ function handleApiRequest(req, res, next) {
     });
 
     child.on('close', (code) => {
+      clearTimeout(killTimeout);
       if (code === 0 && stdout.trim()) {
         try {
           const ytData = JSON.parse(stdout.trim());
-          const videoId = ytData.display_id || ytData.id;
+          const targetVideoId = ytData.id || ytData.display_id;
 
-          if (!videoId) {
+          if (!targetVideoId) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'No matching YouTube video found' }));
             return;
           }
 
-          resolveStudioAudio(videoId).then(async (studioInfo) => {
-            const isClean = !!(studioInfo && studioInfo.cleanStudioResolved);
-            const targetVideoId = (isClean && studioInfo.studioVideoId) ? studioInfo.studioVideoId : videoId;
+          const result = {
+            success: true,
+            videoId: targetVideoId,
+            originalVideoId: targetVideoId,
+            title: ytData.title || rawTitle || 'Audio Track',
+            artist: ytData.channel || ytData.uploader || rawArtist || 'Artist',
+            duration: ytData.duration || 210,
+            audioUrl: `${baseUrl}/api/stream?id=${targetVideoId}`,
+            downloadUrl: `${baseUrl}/api/download?id=${targetVideoId}&title=${encodeURIComponent(ytData.title || rawTitle || 'track')}`,
+            artworkUrl: `https://img.youtube.com/vi/${targetVideoId}/hqdefault.jpg`,
+          };
 
-            let palette = null;
-            try {
-              palette = await getArtworkPalette(targetVideoId);
-            } catch (e) {}
+          try {
+            fs.writeFileSync(resolveCacheFile, JSON.stringify(result, null, 2));
+          } catch (e) {}
 
-            const result = {
-              success: true,
-              videoId: targetVideoId,
-              originalVideoId: videoId,
-              title: studioInfo?.studioTitle || ytData.title || title || 'Audio Track',
-              artist: ytData.artist || ytData.uploader || artist || 'Artist',
-              duration: studioInfo?.studioDuration || ytData.duration || 210,
-              audioUrl: `${baseUrl}/api/stream?id=${targetVideoId}`,
-              downloadUrl: `${baseUrl}/api/download?id=${targetVideoId}&title=${encodeURIComponent(studioInfo?.studioTitle || ytData.title || 'track')}`,
-              artworkUrl: `https://img.youtube.com/vi/${targetVideoId}/hqdefault.jpg`,
-              palette: palette || undefined,
-            };
+          console.log(`[RESOLVE TRACK] Matched "${cleanQuery}" -> ${targetVideoId} ("${result.title}")`);
 
-            try {
-              fs.writeFileSync(resolveCacheFile, JSON.stringify(result, null, 2));
-            } catch (e) {}
-
-            console.log(`[RESOLVE TRACK] Matched "${cleanQuery}" -> ${targetVideoId} ("${result.title}")`);
-
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(result));
-          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
           return;
-        } catch (err) {
-          console.error('[RESOLVE PARSE ERROR]:', err);
+        } catch (parseErr) {
+          console.error('[RESOLVE ERROR] Failed to parse yt-dlp JSON:', parseErr);
         }
       }
 
-      res.writeHead(404, { 'Content-Type': 'application/json' });
+      console.error(`[RESOLVE ERROR] yt-dlp failed (code ${code}):`, stderr.slice(0, 300));
+      res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Failed to resolve YouTube audio stream for query' }));
     });
 
     child.on('error', (err) => {
-      console.error('[RESOLVE EXEC ERROR]:', err);
+      clearTimeout(killTimeout);
+      console.error('[RESOLVE ERROR] Failed to spawn yt-dlp:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      res.end(JSON.stringify({ error: err.message || 'Subprocess execution failed' }));
     });
-
     return;
   }
 
