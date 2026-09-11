@@ -28,6 +28,13 @@ export function setCustomServerHost(hostOrUrl: string | null): void {
 export function getCustomServerHost(): string | null {
   return memoryCustomHost;
 }
+/**
+ * Production Cloud Backend URL (e.g. on Render)
+ * Once your service is deployed on Render, paste your URL here:
+ * e.g. 'https://aura-music-server.onrender.com'
+ * When set, the standalone APK connects to this cloud URL anywhere in the world on 4G/5G/Wi-Fi!
+ */
+export const CLOUD_SERVER_URL: string = '';
 
 /**
  * Gets the base URL for the backend API services.
@@ -39,6 +46,10 @@ export function getApiBaseUrl(port: number = 5000): string {
       return memoryCustomHost;
     }
     return `http://${memoryCustomHost}:${port}`;
+  }
+
+  if (CLOUD_SERVER_URL && CLOUD_SERVER_URL.trim().length > 0) {
+    return CLOUD_SERVER_URL.trim().replace(/\/+$/, '');
   }
 
   if (Platform.OS === 'web') {

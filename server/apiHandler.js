@@ -5,9 +5,38 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
-const CACHE_DIR = path.join(__dirname, 'cache');
+const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, 'cache');
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
+
+function pruneCacheIfNeeded() {
+  try {
+    const files = fs.readdirSync(CACHE_DIR).map(f => {
+      const p = path.join(CACHE_DIR, f);
+      try {
+        const s = fs.statSync(p);
+        return { path: p, mtime: s.mtimeMs, size: s.size };
+      } catch (e) {
+        return null;
+      }
+    }).filter(Boolean);
+
+    let totalSize = files.reduce((acc, f) => acc + f.size, 0);
+    // Keep cache under 180 MB on ephemeral cloud storage
+    if (totalSize > 180 * 1024 * 1024) {
+      files.sort((a, b) => a.mtime - b.mtime);
+      for (const f of files) {
+        try {
+          fs.unlinkSync(f.path);
+          totalSize -= f.size;
+          if (totalSize <= 100 * 1024 * 1024) break;
+        } catch (e) {}
+      }
+    }
+  } catch (err) {}
 }
 
 // Serve audio file with full HTTP 206 Partial Content (Range request) support
@@ -69,7 +98,7 @@ function getArtworkPalette(target) {
 
   return new Promise((resolve) => {
     const pyScript = path.join(__dirname, 'paletteExtractor.py');
-    const child = spawn('python', [pyScript, target]);
+    const child = spawn(PYTHON_BIN, [pyScript, target]);
     let stdout = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.on('close', (code) => {
@@ -107,7 +136,7 @@ function resolveStudioAudio(videoId) {
 
   return new Promise((resolve) => {
     const pyScript = path.join(__dirname, 'studioAudioResolver.py');
-    const child = spawn('python', [pyScript, videoId]);
+    const child = spawn(PYTHON_BIN, [pyScript, videoId]);
     let stdout = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
     child.on('close', (code) => {
@@ -143,7 +172,7 @@ function ensureAudioCached(videoId) {
     const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
     console.log(`[CACHE] Downloading audio for seeking & caching: ${videoId}`);
 
-    const child = spawn('python', [
+    const child = spawn(PYTHON_BIN, [
       '-m',
       'yt_dlp',
       '-o',
@@ -163,6 +192,7 @@ function ensureAudioCached(videoId) {
             try { fs.unlinkSync(cacheFile); } catch (e) {}
           }
           fs.renameSync(tempFile, cacheFile);
+          pruneCacheIfNeeded();
           console.log(`[CACHE] Cached successfully: ${cacheFile} (${(fs.statSync(cacheFile).size / (1024 * 1024)).toFixed(2)} MB)`);
           resolve(cacheFile);
         } catch (err) {
@@ -272,7 +302,7 @@ function handleApiRequest(req, res, next) {
       let directUrl = null;
       try {
         const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
-        const stdout = execSync(`python -m yt_dlp -f "ba[ext=m4a]/ba/b" -g "${ytUrl}"`, {
+        const stdout = execSync(`"${PYTHON_BIN}" -m yt_dlp -f "ba[ext=m4a]/ba/b" -g "${ytUrl}"`, {
           timeout: 7000,
           encoding: 'utf8',
         });
@@ -379,7 +409,7 @@ function handleApiRequest(req, res, next) {
         .catch((err) => {
           console.error('[STREAM ERROR] Fallback to live pipe:', err);
           const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
-          const child = spawn('python', [
+          const child = spawn(PYTHON_BIN, [
             '-m',
             'yt_dlp',
             '-o',
@@ -434,7 +464,7 @@ function handleApiRequest(req, res, next) {
       const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
       console.log(`[DOWNLOAD] Generating clean audio download for: ${targetVideoId} (${rawTitle})`);
 
-      const child = spawn('python', [
+      const child = spawn(PYTHON_BIN, [
         '-m',
         'yt_dlp',
         '-o',
@@ -793,7 +823,7 @@ function handleApiRequest(req, res, next) {
 
     console.log(`[RESOLVE TRACK] Matchmaking YouTube audio for: "${cleanQuery}"`);
 
-    const child = spawn('python', [
+    const child = spawn(PYTHON_BIN, [
       '-m',
       'yt_dlp',
       '--skip-download',

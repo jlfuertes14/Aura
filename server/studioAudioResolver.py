@@ -50,7 +50,7 @@ def resolve_studio_audio(video_id: str) -> dict:
 
     # 2. Extract original video metadata
     info_cmd = [
-        'python',
+        sys.executable,
         '-m',
         'yt_dlp',
         '--skip-download',
@@ -109,7 +109,7 @@ def resolve_studio_audio(video_id: str) -> dict:
     search_q = f"{clean_query} official audio"
 
     search_cmd = [
-        'python',
+        sys.executable,
         '-m',
         'yt_dlp',
         '--default-search',
