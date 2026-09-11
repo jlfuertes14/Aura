@@ -56,8 +56,10 @@ def resolve_studio_audio(video_id: str) -> dict:
         '--skip-download',
         '--dump-json',
         '--no-playlist',
+        '--js-runtimes',
+        'node',
         '--extractor-args',
-        'youtube:player_client=android,ios;player_skip=webpage,configs',
+        'youtube:player_client=visionos,web_embedded,ios',
         f'https://www.youtube.com/watch?v={video_id}'
     ]
 
@@ -120,7 +122,7 @@ def resolve_studio_audio(video_id: str) -> dict:
         '--no-playlist',
         '--flat-playlist',
         '--extractor-args',
-        'youtube:player_client=android,ios;player_skip=webpage,configs',
+        'youtube:player_client=visionos,web_embedded,ios',
         f'ytsearch5:{search_q}'
     ]
 
