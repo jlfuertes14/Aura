@@ -11,7 +11,10 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   Search as SearchIcon,
   Download,
@@ -33,7 +36,11 @@ import { TrackListItem } from '../components/TrackListItem';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
 
 export const SearchScreen: React.FC = () => {
+  const insets = useSafeAreaInsets();
   const { downloadTrack, importLocalAudio, playTrack } = usePlayer();
+
+  const statusBarHeight = Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0;
+  const safeTopPadding = Math.max(insets.top, statusBarHeight, 40) + spacing.md;
 
   // Search filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -226,7 +233,7 @@ export const SearchScreen: React.FC = () => {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.contentContainer}
+      contentContainerStyle={[styles.contentContainer, { paddingTop: safeTopPadding }]}
       showsVerticalScrollIndicator={false}
     >
       {/* Title */}

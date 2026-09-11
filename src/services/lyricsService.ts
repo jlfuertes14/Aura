@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchApiWithFallback } from './apiConfig';
 
 export interface LyricLine {
@@ -16,6 +17,64 @@ export interface LyricsData {
 
 // In-memory cache for fast repeat access
 const lyricsCache = new Map<string, LyricsData | null>();
+const OFFLINE_LYRICS_PREFIX = '@music_player/offline_lyrics_';
+
+/**
+ * Saves lyrics to device persistent storage (AsyncStorage) for zero-data offline playback
+ */
+export async function saveOfflineLyrics(
+  trackId: string,
+  title: string,
+  artist: string,
+  lyrics: LyricsData
+): Promise<void> {
+  try {
+    const keyById = `${OFFLINE_LYRICS_PREFIX}${trackId}`;
+    const keyByName = `${OFFLINE_LYRICS_PREFIX}${cleanMusicString(artist).toLowerCase()}:::${cleanMusicString(title).toLowerCase()}`;
+    const jsonStr = JSON.stringify(lyrics);
+    await AsyncStorage.multiSet([
+      [keyById, jsonStr],
+      [keyByName, jsonStr],
+    ]);
+  } catch (err) {
+    console.warn('Failed to save offline lyrics:', err);
+  }
+}
+
+/**
+ * Retrieves persistently cached offline lyrics by trackId or artist/title
+ */
+export async function getOfflineLyrics(
+  trackId?: string,
+  title?: string,
+  artist?: string
+): Promise<LyricsData | null> {
+  try {
+    if (trackId) {
+      const raw = await AsyncStorage.getItem(`${OFFLINE_LYRICS_PREFIX}${trackId}`);
+      if (raw) return JSON.parse(raw);
+    }
+    if (title && artist) {
+      const keyByName = `${OFFLINE_LYRICS_PREFIX}${cleanMusicString(artist).toLowerCase()}:::${cleanMusicString(title).toLowerCase()}`;
+      const raw = await AsyncStorage.getItem(keyByName);
+      if (raw) return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.warn('Failed to read offline lyrics:', err);
+  }
+  return null;
+}
+
+/**
+ * Deletes persistent lyrics when a downloaded track is removed
+ */
+export async function deleteOfflineLyrics(trackId: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(`${OFFLINE_LYRICS_PREFIX}${trackId}`);
+  } catch (err) {
+    console.warn('Failed to delete offline lyrics:', err);
+  }
+}
 
 /**
  * Extracts YouTube 11-character video ID from any track identifier or stream/thumbnail URL
@@ -138,7 +197,8 @@ export function extractArtistAndTitle(rawTitle: string, rawArtist: string): { ti
 export async function fetchLyrics(
   title: string,
   artist: string,
-  duration?: number
+  duration?: number,
+  trackId?: string
 ): Promise<LyricsData | null> {
   const parsed = extractArtistAndTitle(title, artist);
   const cleanTitle = parsed.title;
@@ -147,6 +207,13 @@ export async function fetchLyrics(
 
   if (lyricsCache.has(cacheKey)) {
     return lyricsCache.get(cacheKey) || null;
+  }
+
+  // 1. Check persistent offline storage first (instant 0ms response, works completely offline)
+  const offlineLyrics = await getOfflineLyrics(trackId, cleanTitle, cleanArtist);
+  if (offlineLyrics) {
+    lyricsCache.set(cacheKey, offlineLyrics);
+    return offlineLyrics;
   }
 
   try {
@@ -222,6 +289,7 @@ export async function fetchLyrics(
       };
 
       lyricsCache.set(cacheKey, result);
+      saveOfflineLyrics(trackId || cacheKey, cleanTitle, cleanArtist, result).catch(() => {});
       return result;
     }
 
@@ -229,6 +297,7 @@ export async function fetchLyrics(
     const demoLyrics = getCuratedDemoLyrics(cleanTitle);
     if (demoLyrics) {
       lyricsCache.set(cacheKey, demoLyrics);
+      saveOfflineLyrics(trackId || cacheKey, cleanTitle, cleanArtist, demoLyrics).catch(() => {});
       return demoLyrics;
     }
 

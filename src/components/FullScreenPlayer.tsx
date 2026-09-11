@@ -40,6 +40,9 @@ import {
   VolumeX,
   Mic2,
   Sparkles,
+  ChevronUp,
+  X,
+  Trash2,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -49,6 +52,7 @@ import {
   LyricsData,
 } from '../services/lyricsService';
 import { resolveArtworkSource } from '../services/musicService';
+import { Track } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
 import { useTrackArtworkPalette, isLightBackground } from '../utils/artworkColors';
 import { AudioVisualizer } from './AudioVisualizer';
@@ -56,6 +60,158 @@ import { colors, spacing, typography, borderRadius, layout } from '../theme/them
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = Math.min(SCREEN_WIDTH - 64, 320);
+
+interface DraggableQueueItemProps {
+  track: Track;
+  index: number;
+  totalTracks: number;
+  isCurrent: boolean;
+  onPlay: () => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
+  onRemove: (index: number) => void;
+}
+
+const DraggableQueueItem: React.FC<DraggableQueueItemProps> = ({
+  track,
+  index,
+  totalTracks,
+  isCurrent,
+  onPlay,
+  onReorder,
+  onRemove,
+}) => {
+  const panY = useRef(new Animated.Value(0)).current;
+  const isDragging = useRef(false);
+  const [draggingState, setDraggingState] = useState(false);
+  const rowHeight = 62;
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 4,
+      onPanResponderGrant: () => {
+        isDragging.current = true;
+        setDraggingState(true);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      },
+      onPanResponderMove: Animated.event([null, { dy: panY }], { useNativeDriver: false }),
+      onPanResponderRelease: (_, gesture) => {
+        isDragging.current = false;
+        setDraggingState(false);
+        const steps = Math.round(gesture.dy / rowHeight);
+        const targetIndex = Math.max(0, Math.min(totalTracks - 1, index + steps));
+        if (targetIndex !== index) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+          onReorder(index, targetIndex);
+        }
+        Animated.spring(panY, {
+          toValue: 0,
+          useNativeDriver: false,
+          friction: 6,
+        }).start();
+      },
+      onPanResponderTerminate: () => {
+        isDragging.current = false;
+        setDraggingState(false);
+        Animated.spring(panY, {
+          toValue: 0,
+          useNativeDriver: false,
+        }).start();
+      },
+    })
+  ).current;
+
+  return (
+    <Animated.View
+      style={[
+        styles.queueItem,
+        isCurrent && styles.activeQueueItem,
+        draggingState && styles.draggingQueueItem,
+        {
+          transform: [{ translateY: panY }, { scale: draggingState ? 1.02 : 1 }],
+          zIndex: draggingState ? 9999 : 1,
+          elevation: draggingState ? 8 : 0,
+        },
+      ]}
+    >
+      <Pressable style={styles.queueItemPressable} onPress={onPlay}>
+        <View style={styles.queueIndexBox}>
+          <Text style={styles.queueIndexText}>{index + 1}</Text>
+        </View>
+
+        <Image source={resolveArtworkSource(track.artworkUrl)} style={styles.queueThumb} />
+
+        <View style={styles.queueInfo}>
+          <Text
+            numberOfLines={1}
+            style={[styles.queueTitle, isCurrent && { fontWeight: '700' }]}
+          >
+            {track.title}
+          </Text>
+          <Text numberOfLines={1} style={styles.queueArtist}>
+            {track.artist}
+          </Text>
+        </View>
+
+        {isCurrent && (
+          <View style={styles.playingPill}>
+            <Text style={styles.playingTag}>PLAYING</Text>
+          </View>
+        )}
+      </Pressable>
+
+      {/* Quick Move Up/Down Buttons */}
+      <View style={styles.queueQuickActionCluster}>
+        {index > 0 && (
+          <Pressable
+            style={styles.stepMoveBtn}
+            hitSlop={6}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              onReorder(index, index - 1);
+            }}
+          >
+            <ChevronUp size={13} color="rgba(255, 255, 255, 0.65)" />
+          </Pressable>
+        )}
+        {index < totalTracks - 1 && (
+          <Pressable
+            style={styles.stepMoveBtn}
+            hitSlop={6}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              onReorder(index, index + 1);
+            }}
+          >
+            <ChevronDown size={13} color="rgba(255, 255, 255, 0.65)" />
+          </Pressable>
+        )}
+      </View>
+
+      {/* Drag Grip Handle */}
+      <View
+        {...panResponder.panHandlers}
+        style={styles.dragGripContainer}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        <View style={styles.dragBar} />
+        <View style={styles.dragBar} />
+        <View style={styles.dragBar} />
+      </View>
+
+      {/* Remove from queue button */}
+      {!isCurrent && (
+        <Pressable
+          style={styles.queueRemoveBtn}
+          hitSlop={8}
+          onPress={() => onRemove(index)}
+        >
+          <X size={14} color="rgba(255, 255, 255, 0.45)" />
+        </Pressable>
+      )}
+    </Animated.View>
+  );
+};
 
 export const FullScreenPlayer: React.FC = () => {
   const {
@@ -85,6 +241,9 @@ export const FullScreenPlayer: React.FC = () => {
     downloadTrack,
     closePlayerModal,
     playTrack,
+    reorderQueue,
+    removeFromQueue,
+    clearQueue,
   } = usePlayer();
 
   const palette = useTrackArtworkPalette(currentTrack);
@@ -114,8 +273,8 @@ export const FullScreenPlayer: React.FC = () => {
     setIsLoadingLyrics(true);
     lineLayouts.current = {};
 
-    // Fetch lyrics from LRCLIB / companion proxy
-    fetchLyrics(currentTrack.title, currentTrack.artist, currentTrack.duration)
+    // Fetch lyrics (checks offline persistent storage first, then companion proxy/LRCLIB)
+    fetchLyrics(currentTrack.title, currentTrack.artist, currentTrack.duration, currentTrack.id)
       .then((data) => {
         if (isMounted) {
           setLyricsData(data);
@@ -1016,48 +1175,39 @@ export const FullScreenPlayer: React.FC = () => {
             contentContainerStyle={styles.queueContainer}
             showsVerticalScrollIndicator={false}
           >
-            <Text style={[styles.queueHeader, { color: '#FFFFFF' }]}>Up Next in Queue</Text>
-            {queue.map((track, idx) => {
-              const isCurrent = track.id === currentTrack.id;
-              return (
+            <View style={styles.queueHeaderRow}>
+              <View>
+                <Text style={[styles.queueHeader, { color: '#FFFFFF' }]}>
+                  Up Next in Queue ({queue.length})
+                </Text>
+                <Text style={styles.queueHeaderHint}>
+                  Drag ☰ or use arrows to reorder songs
+                </Text>
+              </View>
+              {queue.length > 1 && (
                 <Pressable
-                  key={`${track.id}-${idx}`}
-                  style={[
-                    styles.queueItem,
-                    isCurrent && [
-                      styles.activeQueueItem,
-                      { backgroundColor: 'rgba(255, 255, 255, 0.12)' },
-                    ],
-                  ]}
-                  onPress={() => playTrack(track, queue)}
+                  style={styles.clearQueueBtn}
+                  hitSlop={8}
+                  onPress={clearQueue}
                 >
-                  <Image source={{ uri: track.artworkUrl }} style={styles.queueThumb} />
-                  <View style={styles.queueInfo}>
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.queueTitle,
-                        { color: '#FFFFFF' },
-                        isCurrent && { fontWeight: '700' },
-                      ]}
-                    >
-                      {track.title}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.queueArtist, { color: 'rgba(255, 255, 255, 0.70)' }]}
-                    >
-                      {track.artist}
-                    </Text>
-                  </View>
-                  {isCurrent && (
-                    <Text style={[styles.playingTag, { color: '#FFFFFF' }]}>
-                      PLAYING
-                    </Text>
-                  )}
+                  <Trash2 size={13} color="rgba(255, 255, 255, 0.7)" />
+                  <Text style={styles.clearQueueText}>Clear</Text>
                 </Pressable>
-              );
-            })}
+              )}
+            </View>
+
+            {queue.map((track, idx) => (
+              <DraggableQueueItem
+                key={`${track.id}-${idx}`}
+                track={track}
+                index={idx}
+                totalTracks={queue.length}
+                isCurrent={track.id === currentTrack.id}
+                onPlay={() => playTrack(track, queue)}
+                onReorder={reorderQueue}
+                onRemove={removeFromQueue}
+              />
+            ))}
           </ScrollView>
         )}
         </SafeAreaView>
@@ -1593,22 +1743,76 @@ const styles = StyleSheet.create({
     padding: spacing.base,
     paddingBottom: spacing.xxxl,
   },
-  queueHeader: {
-    color: colors.textPrimary,
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.bold,
+  queueHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: spacing.md,
     paddingHorizontal: spacing.sm,
+  },
+  queueHeader: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.base,
+    fontWeight: typography.weights.bold,
+  },
+  queueHeaderHint: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  clearQueueBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  clearQueueText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 10,
+    fontWeight: '700',
   },
   queueItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: spacing.sm,
+    padding: spacing.xs + 2,
     borderRadius: borderRadius.md,
-    marginBottom: spacing.xs,
+    marginBottom: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   activeQueueItem: {
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    borderColor: 'rgba(255, 255, 255, 0.25)',
+  },
+  draggingQueueItem: {
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    borderColor: colors.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+  },
+  queueItemPressable: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  queueIndexBox: {
+    width: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  queueIndexText: {
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontSize: 11,
+    fontWeight: '700',
   },
   queueThumb: {
     width: 42,
@@ -1618,26 +1822,59 @@ const styles = StyleSheet.create({
   },
   queueInfo: {
     flex: 1,
-    marginLeft: spacing.md,
+    marginLeft: spacing.sm,
+    marginRight: spacing.xs,
   },
   queueTitle: {
-    color: colors.textPrimary,
-    fontSize: typography.sizes.sm,
+    color: '#FFFFFF',
+    fontSize: typography.sizes.xs + 1,
     fontWeight: typography.weights.medium,
   },
-  activeQueueText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
   queueArtist: {
-    color: colors.textSecondary,
-    fontSize: typography.sizes.xs,
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: typography.sizes.xs - 1,
     marginTop: 2,
+  },
+  playingPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    marginRight: 4,
   },
   playingTag: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 8,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  queueQuickActionCluster: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    paddingHorizontal: 2,
+  },
+  stepMoveBtn: {
+    padding: 2,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  dragGripContainer: {
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  dragBar: {
+    width: 14,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  queueRemoveBtn: {
+    padding: 6,
+    marginLeft: 2,
   },
 });

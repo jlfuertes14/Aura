@@ -53,8 +53,16 @@ interface PlayerContextType {
   closePlayerModal: () => void;
   importLocalAudio: () => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<void>;
+  deletePlaylist: (playlistId: string) => Promise<void>;
+  updatePlaylistCover: (playlistId: string, coverUrl: string) => Promise<void>;
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
+  removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
   importSpotifyPlaylist: (url: string) => Promise<Playlist>;
+  addToQueue: (track: Track) => void;
+  playNext: (track: Track) => void;
+  reorderQueue: (fromIndex: number, toIndex: number) => void;
+  removeFromQueue: (index: number) => void;
+  clearQueue: () => void;
 }
 
 const PlayerContext = createContext<PlayerContextType | undefined>(undefined);
@@ -152,12 +160,17 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         try {
           const matched = await resolveTrackAudio(activeTrack);
           if (matched) {
+            // Preserve official Spotify album cover rather than replacing with YouTube thumbnail
+            const resolvedArtwork = (activeTrack.source === 'spotify' && activeTrack.artworkUrl)
+              ? activeTrack.artworkUrl
+              : (activeTrack.artworkUrl || matched.artworkUrl || 'synthwave_grid');
+
             activeTrack = {
               ...activeTrack,
               audioUrl: matched.audioUrl,
               videoId: matched.videoId,
               duration: matched.duration || activeTrack.duration,
-              artworkUrl: matched.artworkUrl || activeTrack.artworkUrl,
+              artworkUrl: resolvedArtwork,
               palette: matched.palette || activeTrack.palette,
             };
           }
@@ -501,6 +514,27 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     await savePlaylists(updated);
   };
 
+  const deletePlaylist = async (playlistId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const updated = playlists.filter((p) => p.id !== playlistId);
+    setPlaylists(updated);
+    await savePlaylists(updated);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
+  const updatePlaylistCover = async (playlistId: string, coverUrl: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const updated = playlists.map((p) => {
+      if (p.id === playlistId) {
+        return { ...p, coverUrl };
+      }
+      return p;
+    });
+    setPlaylists(updated);
+    await savePlaylists(updated);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
   const addTrackToPlaylist = async (playlistId: string, track: Track) => {
     const updated = playlists.map((p) => {
       if (p.id === playlistId) {
@@ -512,6 +546,85 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     });
     setPlaylists(updated);
     await savePlaylists(updated);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
+  const removeTrackFromPlaylist = async (playlistId: string, trackId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const updated = playlists.map((p) => {
+      if (p.id === playlistId) {
+        return { ...p, tracks: p.tracks.filter((t) => t.id !== trackId) };
+      }
+      return p;
+    });
+    setPlaylists(updated);
+    await savePlaylists(updated);
+  };
+
+  const addToQueue = (track: Track) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const newQueue = [...queue, track];
+    setQueue(newQueue);
+    originalQueueRef.current = newQueue;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
+  const playNext = (track: Track) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const newQueue = [...queue];
+    const insertIdx = queueIndex + 1;
+    newQueue.splice(insertIdx, 0, track);
+    setQueue(newQueue);
+    originalQueueRef.current = newQueue;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
+  const reorderQueue = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    setQueue((prevQueue) => {
+      if (fromIndex < 0 || fromIndex >= prevQueue.length || toIndex < 0 || toIndex >= prevQueue.length) {
+        return prevQueue;
+      }
+      const newQueue = [...prevQueue];
+      const [movedItem] = newQueue.splice(fromIndex, 1);
+      newQueue.splice(toIndex, 0, movedItem);
+      originalQueueRef.current = newQueue;
+
+      if (currentTrack) {
+        const newIndex = newQueue.findIndex((t) => t.id === currentTrack.id);
+        if (newIndex !== -1) {
+          setQueueIndex(newIndex);
+        }
+      }
+      return newQueue;
+    });
+  };
+
+  const removeFromQueue = (index: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setQueue((prevQueue) => {
+      if (index < 0 || index >= prevQueue.length) return prevQueue;
+      const newQueue = prevQueue.filter((_, i) => i !== index);
+      originalQueueRef.current = newQueue;
+      if (currentTrack) {
+        const newIndex = newQueue.findIndex((t) => t.id === currentTrack.id);
+        setQueueIndex(newIndex !== -1 ? newIndex : 0);
+      }
+      return newQueue;
+    });
+  };
+
+  const clearQueue = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (currentTrack) {
+      setQueue([currentTrack]);
+      setQueueIndex(0);
+      originalQueueRef.current = [currentTrack];
+    } else {
+      setQueue([]);
+      setQueueIndex(0);
+      originalQueueRef.current = [];
+    }
   };
 
   const importSpotifyPlaylist = async (url: string): Promise<Playlist> => {
@@ -572,8 +685,16 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         closePlayerModal,
         importLocalAudio,
         createPlaylist,
+        deletePlaylist,
+        updatePlaylistCover,
         addTrackToPlaylist,
+        removeTrackFromPlaylist,
         importSpotifyPlaylist,
+        addToQueue,
+        playNext,
+        reorderQueue,
+        removeFromQueue,
+        clearQueue,
       }}
     >
       {children}

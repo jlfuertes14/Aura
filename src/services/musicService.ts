@@ -5,6 +5,7 @@ import { getApiBaseUrl, fetchApiWithFallback } from './apiConfig';
 export function getCuratedStreamUrl(videoId: string): string {
   return `${getApiBaseUrl(5000)}/api/stream?id=${videoId}`;
 }
+export const getStreamUrl = getCuratedStreamUrl;
 
 // Curated local images bundled into the binary app
 export const LOCAL_IMAGES: Record<string, any> = {
@@ -32,6 +33,14 @@ export function resolveArtworkSource(artworkUrl?: string | number | null): any {
     return artworkUrl;
   }
   if (typeof artworkUrl === 'string') {
+    if (
+      artworkUrl.startsWith('http://') ||
+      artworkUrl.startsWith('https://') ||
+      artworkUrl.startsWith('file://') ||
+      artworkUrl.startsWith('data:')
+    ) {
+      return { uri: artworkUrl };
+    }
     const lower = artworkUrl.toLowerCase();
     for (const key of Object.keys(LOCAL_IMAGES)) {
       if (lower.includes(key)) {
@@ -54,7 +63,7 @@ export const CURATED_TRACKS: Track[] = [
     album: 'BEAUTY IN DEATH (Deluxe Edition)',
     duration: 256,
     artworkUrl: 'https://img.youtube.com/vi/4tijiFGhBN8/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=4tijiFGhBN8',
+    audioUrl: getStreamUrl('4tijiFGhBN8'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Alt R&B',
@@ -67,7 +76,7 @@ export const CURATED_TRACKS: Track[] = [
     album: 'After Hours',
     duration: 200,
     artworkUrl: 'https://img.youtube.com/vi/4NRXx6U8ABQ/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=4NRXx6U8ABQ',
+    audioUrl: getStreamUrl('4NRXx6U8ABQ'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Synthwave',
@@ -79,12 +88,12 @@ export const CURATED_TRACKS: Track[] = [
     artist: 'Billie Eilish',
     album: 'HIT ME HARD AND SOFT',
     duration: 196,
-    artworkUrl: 'https://img.youtube.com/vi/d5gf9dXHevw/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=d5gf9dXHevw',
+    artworkUrl: 'https://img.youtube.com/vi/d5gf9dXbPi0/hqdefault.jpg',
+    audioUrl: getStreamUrl('d5gf9dXbPi0'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Alt Pop',
-    videoId: 'd5gf9dXHevw',
+    videoId: 'd5gf9dXbPi0',
   },
   {
     id: 'curated-fein',
@@ -93,7 +102,7 @@ export const CURATED_TRACKS: Track[] = [
     album: 'UTOPIA',
     duration: 191,
     artworkUrl: 'https://img.youtube.com/vi/B9synWjqBn8/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=B9synWjqBn8',
+    audioUrl: getStreamUrl('B9synWjqBn8'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Hip Hop',
@@ -106,7 +115,7 @@ export const CURATED_TRACKS: Track[] = [
     album: 'Favourite Worst Nightmare',
     duration: 253,
     artworkUrl: 'https://img.youtube.com/vi/qU9mHegkTc4/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=qU9mHegkTc4',
+    audioUrl: getStreamUrl('qU9mHegkTc4'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Indie Rock',
@@ -118,12 +127,12 @@ export const CURATED_TRACKS: Track[] = [
     artist: 'SZA',
     album: 'SOS',
     duration: 201,
-    artworkUrl: 'https://img.youtube.com/vi/LDY_XyxSeLk/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=LDY_XyxSeLk',
+    artworkUrl: 'https://img.youtube.com/vi/Sv5yCzPCkv8/hqdefault.jpg',
+    audioUrl: getStreamUrl('Sv5yCzPCkv8'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'R&B',
-    videoId: 'LDY_XyxSeLk',
+    videoId: 'Sv5yCzPCkv8',
   },
   {
     id: 'curated-chemical',
@@ -131,12 +140,12 @@ export const CURATED_TRACKS: Track[] = [
     artist: 'Post Malone',
     album: 'AUSTIN',
     duration: 184,
-    artworkUrl: 'https://img.youtube.com/vi/afm_Lq4sHlQ/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=afm_Lq4sHlQ',
+    artworkUrl: 'https://img.youtube.com/vi/D2HMHH6sRBY/hqdefault.jpg',
+    audioUrl: getStreamUrl('D2HMHH6sRBY'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Pop Rock',
-    videoId: 'afm_Lq4sHlQ',
+    videoId: 'D2HMHH6sRBY',
   },
   {
     id: 'curated-levitating',
@@ -145,7 +154,7 @@ export const CURATED_TRACKS: Track[] = [
     album: 'Future Nostalgia',
     duration: 203,
     artworkUrl: 'https://img.youtube.com/vi/TUVcZfQe-Kw/hqdefault.jpg',
-    audioUrl: 'http://localhost:5000/api/stream?id=TUVcZfQe-Kw',
+    audioUrl: getStreamUrl('TUVcZfQe-Kw'),
     isDownloaded: false,
     source: 'youtube',
     genre: 'Dance Pop',
@@ -331,6 +340,10 @@ export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrac
 
   const data = await response.json();
   if (data.success && data.videoId) {
+    const finalArtwork = (track.source === 'spotify' && track.artworkUrl)
+      ? track.artworkUrl
+      : (track.artworkUrl || data.artworkUrl);
+
     return {
       videoId: data.videoId,
       title: data.title || track.title,
@@ -338,7 +351,7 @@ export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrac
       duration: data.duration || track.duration,
       audioUrl: data.audioUrl,
       downloadUrl: data.downloadUrl,
-      artworkUrl: data.artworkUrl || track.artworkUrl,
+      artworkUrl: finalArtwork,
       palette: data.palette || track.palette,
     };
   }

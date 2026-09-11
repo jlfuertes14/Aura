@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Track, Playlist } from '../types/music';
+import { fetchLyrics, saveOfflineLyrics, deleteOfflineLyrics } from './lyricsService';
 
 const STORAGE_KEYS = {
   DOWNLOADED_TRACKS: '@music_player/downloaded_tracks',
@@ -92,6 +93,14 @@ export async function downloadTrackToDevice(
 
     await saveDownloadedTrack(downloadedTrack);
 
+    // Save offline lyrics on web as well
+    try {
+      const lyrics = await fetchLyrics(track.title, track.artist, track.duration, track.id);
+      if (lyrics) {
+        await saveOfflineLyrics(track.id, track.title, track.artist, lyrics);
+      }
+    } catch {}
+
     if (onProgress) onProgress(1.0);
     return downloadedTrack;
   }
@@ -151,7 +160,15 @@ export async function downloadTrackToDevice(
       downloadDate: new Date().toISOString(),
     };
 
-    // 5. Index into local offline database
+    // 5. Download & persist synchronized lyrics for offline playback
+    try {
+      const lyrics = await fetchLyrics(track.title, track.artist, track.duration, track.id);
+      if (lyrics) {
+        await saveOfflineLyrics(track.id, track.title, track.artist, lyrics);
+      }
+    } catch {}
+
+    // 6. Index into local offline database
     await saveDownloadedTrack(downloadedTrack);
 
     if (onProgress) {
@@ -205,6 +222,9 @@ export async function deleteDownloadedTrack(trackId: string): Promise<void> {
       await FileSystem.deleteAsync(targetFileUri, { idempotent: true }).catch(() => {});
       await FileSystem.deleteAsync(targetArtworkUri, { idempotent: true }).catch(() => {});
     }
+
+    // Remove offline lyrics
+    await deleteOfflineLyrics(trackId).catch(() => {});
 
     // Remove from AsyncStorage
     const existing = await getDownloadedTracks();

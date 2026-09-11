@@ -11,7 +11,10 @@ import {
   Modal,
   Image,
   ActivityIndicator,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   FolderCheck,
   Heart,
@@ -28,7 +31,12 @@ import {
   Music,
   Download,
   Disc3,
+  Trash2,
+  Camera,
+  Image as ImageIcon,
+  Check,
 } from 'lucide-react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
 import { usePlayer } from '../context/PlayerContext';
 import { TrackListItem } from '../components/TrackListItem';
@@ -41,7 +49,17 @@ import {
 import { Playlist, Track, SpotifyPlaylistResult } from '../types/music';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
 
+const CURATED_COVERS = [
+  { id: 'synthwave_grid', name: 'Synthwave' },
+  { id: 'lofi_city', name: 'Lofi City' },
+  { id: 'ambient_astral', name: 'Ambient' },
+  { id: 'edm_pulse', name: 'EDM Pulse' },
+  { id: 'acoustic_morning', name: 'Acoustic' },
+  { id: 'hiphop_street', name: 'Hip Hop' },
+];
+
 export const LibraryScreen: React.FC = () => {
+  const insets = useSafeAreaInsets();
   const {
     downloadedTracks,
     favorites,
@@ -49,8 +67,13 @@ export const LibraryScreen: React.FC = () => {
     playTrack,
     importLocalAudio,
     createPlaylist,
+    deletePlaylist,
+    updatePlaylistCover,
     importSpotifyPlaylist,
   } = usePlayer();
+
+  const statusBarHeight = Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0;
+  const safeTopPadding = Math.max(insets.top, statusBarHeight, 40) + spacing.md;
 
   const [activeTab, setActiveTab] = useState<'downloads' | 'favorites' | 'playlists'>('downloads');
   const [showNewPlaylistModal, setShowNewPlaylistModal] = useState(false);
@@ -63,12 +86,70 @@ export const LibraryScreen: React.FC = () => {
   const [spotifyPreview, setSpotifyPreview] = useState<SpotifyPlaylistResult | null>(null);
   const [spotifyError, setSpotifyError] = useState<string | null>(null);
 
+  // Cover Picker states
+  const [showCoverPicker, setShowCoverPicker] = useState(false);
+  const [customCoverUrl, setCustomCoverUrl] = useState('');
+
   // Selected Playlist drill-in view
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
 
   const selectedPlaylist = selectedPlaylistId
     ? playlists.find((p) => p.id === selectedPlaylistId) || null
     : null;
+
+  const handleDeletePlaylist = (playlist: Playlist) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    Alert.alert(
+      'Delete Playlist',
+      `Are you sure you want to delete "${playlist.name}"? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deletePlaylist(playlist.id);
+            if (selectedPlaylistId === playlist.id) {
+              setSelectedPlaylistId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSelectCuratedCover = async (coverId: string) => {
+    if (!selectedPlaylist) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    await updatePlaylistCover(selectedPlaylist.id, coverId);
+    setShowCoverPicker(false);
+  };
+
+  const handlePickDeviceImage = async () => {
+    if (!selectedPlaylist) return;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'image/*',
+        copyToCacheDirectory: true,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const imageUri = result.assets[0].uri;
+        await updatePlaylistCover(selectedPlaylist.id, imageUri);
+        setShowCoverPicker(false);
+      }
+    } catch (err) {
+      console.error('Failed to pick device photo:', err);
+    }
+  };
+
+  const handleApplyCustomUrl = async () => {
+    if (!selectedPlaylist || !customCoverUrl.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    await updatePlaylistCover(selectedPlaylist.id, customCoverUrl.trim());
+    setCustomCoverUrl('');
+    setShowCoverPicker(false);
+  };
 
   // Filter favorite tracks
   const favoriteTracks = [
@@ -168,24 +249,43 @@ export const LibraryScreen: React.FC = () => {
     return (
       <View style={styles.container}>
         <ScrollView
-          contentContainerStyle={styles.contentContainer}
+          contentContainerStyle={[styles.contentContainer, { paddingTop: safeTopPadding }]}
           showsVerticalScrollIndicator={false}
         >
-          {/* Back Navigation Bar */}
-          <Pressable
-            style={({ pressed }) => [styles.backNavBtn, pressed && styles.btnPressed]}
-            onPress={() => setSelectedPlaylistId(null)}
-          >
-            <ArrowLeft size={18} color="#FFFFFF" />
-            <Text style={styles.backNavText}>Back to Library</Text>
-          </Pressable>
+          {/* Top Navigation & Playlist Actions Bar */}
+          <View style={styles.topNavRow}>
+            <Pressable
+              style={({ pressed }) => [styles.backNavBtn, pressed && styles.btnPressed]}
+              onPress={() => setSelectedPlaylistId(null)}
+            >
+              <ArrowLeft size={18} color="#FFFFFF" />
+              <Text style={styles.backNavText}>Back to Library</Text>
+            </Pressable>
 
-          {/* Playlist Hero Spotlight */}
+            <Pressable
+              style={({ pressed }) => [styles.deletePlaylistNavBtn, pressed && styles.btnPressed]}
+              onPress={() => handleDeletePlaylist(selectedPlaylist)}
+            >
+              <Trash2 size={16} color={colors.danger} />
+              <Text style={styles.deletePlaylistNavText}>Delete</Text>
+            </Pressable>
+          </View>
+
+          {/* Playlist Hero Spotlight with Cover Change Tap */}
           <View style={styles.playlistHeroCard}>
-            <Image
-              source={resolveArtworkSource(selectedPlaylist.coverUrl)}
-              style={styles.playlistHeroCover}
-            />
+            <Pressable
+              style={styles.playlistHeroCoverWrapper}
+              onPress={() => setShowCoverPicker(true)}
+            >
+              <Image
+                source={resolveArtworkSource(selectedPlaylist.coverUrl)}
+                style={styles.playlistHeroCover}
+              />
+              <View style={styles.changeCoverBadge}>
+                <Camera size={12} color="#FFFFFF" />
+                <Text style={styles.changeCoverText}>Edit</Text>
+              </View>
+            </Pressable>
             <View style={styles.playlistHeroMeta}>
               <View style={styles.playlistHeroBadgeRow}>
                 {isSpotify ? (
@@ -241,7 +341,7 @@ export const LibraryScreen: React.FC = () => {
                 <Disc3 size={44} color={colors.textMuted} />
                 <Text style={styles.emptyTitle}>No tracks in this playlist yet</Text>
                 <Text style={styles.emptySubtitle}>
-                  Add songs from the Search screen or import another Spotify playlist.
+                  Add songs from the Search screen or tap the 3-dots on any song to add it here.
                 </Text>
               </View>
             ) : (
@@ -249,12 +349,84 @@ export const LibraryScreen: React.FC = () => {
                 <TrackListItem
                   key={track.id}
                   track={track}
+                  playlistId={selectedPlaylist.id}
                   queueContext={selectedPlaylist.tracks}
                 />
               ))
             )}
           </View>
         </ScrollView>
+
+        {/* MODAL: CHOOSE PLAYLIST COVER */}
+        <Modal
+          visible={showCoverPicker}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setShowCoverPicker(false)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setShowCoverPicker(false)}>
+            <Pressable style={styles.coverPickerCard} onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Choose Playlist Cover</Text>
+                <Pressable onPress={() => setShowCoverPicker(false)} hitSlop={8}>
+                  <X size={20} color={colors.textMuted} />
+                </Pressable>
+              </View>
+
+              <Text style={styles.coverPickerSectionTitle}>AURA SOUNDSCAPE ART</Text>
+              <View style={styles.curatedCoversGrid}>
+                {CURATED_COVERS.map((cov) => (
+                  <Pressable
+                    key={cov.id}
+                    style={({ pressed }) => [
+                      styles.curatedCoverItem,
+                      selectedPlaylist?.coverUrl === cov.id && styles.curatedCoverItemActive,
+                      pressed && styles.btnPressed,
+                    ]}
+                    onPress={() => handleSelectCuratedCover(cov.id)}
+                  >
+                    <Image source={resolveArtworkSource(cov.id)} style={styles.curatedCoverImage} />
+                    <Text style={styles.curatedCoverName} numberOfLines={1}>
+                      {cov.name}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <View style={styles.coverDivider} />
+
+              <Text style={styles.coverPickerSectionTitle}>DEVICE OR CUSTOM URL</Text>
+
+              {/* Pick from device file button */}
+              <Pressable
+                style={({ pressed }) => [styles.pickDeviceBtn, pressed && styles.btnPressed]}
+                onPress={handlePickDeviceImage}
+              >
+                <ImageIcon size={16} color="#FFFFFF" />
+                <Text style={styles.pickDeviceBtnText}>Choose Photo from Device</Text>
+              </Pressable>
+
+              {/* Custom URL Input */}
+              <View style={styles.coverUrlInputRow}>
+                <TextInput
+                  style={styles.coverUrlInput}
+                  placeholder="Or paste image URL (https://...)"
+                  placeholderTextColor={colors.textMuted}
+                  value={customCoverUrl}
+                  onChangeText={setCustomCoverUrl}
+                />
+                <Pressable
+                  style={[styles.applyUrlBtn, !customCoverUrl.trim() && styles.applyUrlBtnDisabled]}
+                  disabled={!customCoverUrl.trim()}
+                  onPress={handleApplyCustomUrl}
+                >
+                  <Text style={styles.applyUrlBtnText}>Apply</Text>
+                </Pressable>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </View>
     );
   }
@@ -265,7 +437,7 @@ export const LibraryScreen: React.FC = () => {
   return (
     <View style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={[styles.contentContainer, { paddingTop: safeTopPadding }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
@@ -280,8 +452,13 @@ export const LibraryScreen: React.FC = () => {
           </Pressable>
         </View>
 
-        {/* Tab Filters */}
-        <View style={styles.tabRow}>
+        {/* Tab Filters - Slidable Category Pills */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabScrollWrapper}
+          contentContainerStyle={styles.tabScrollContent}
+        >
           <Pressable
             style={({ pressed }) => [
               styles.tabBtn,
@@ -333,7 +510,7 @@ export const LibraryScreen: React.FC = () => {
               Playlists ({playlists.length})
             </Text>
           </Pressable>
-        </View>
+        </ScrollView>
 
         {/* TAB 1: DOWNLOADED (OFFLINE) */}
         {activeTab === 'downloads' && (
@@ -484,6 +661,16 @@ export const LibraryScreen: React.FC = () => {
                       {pl.tracks.length} {pl.tracks.length === 1 ? 'song' : 'songs'} • {pl.description}
                     </Text>
                   </View>
+                  <Pressable
+                    style={styles.playlistCardDeleteBtn}
+                    hitSlop={12}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleDeletePlaylist(pl);
+                    }}
+                  >
+                    <Trash2 size={16} color="rgba(255, 68, 68, 0.75)" />
+                  </Pressable>
                 </Pressable>
               );
             })}
@@ -701,10 +888,15 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.xs,
     fontWeight: '700',
   },
-  tabRow: {
-    flexDirection: 'row',
-    gap: 8,
+  tabScrollWrapper: {
+    marginHorizontal: -spacing.base,
     marginBottom: spacing.lg,
+  },
+  tabScrollContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.base,
+    gap: 8,
   },
   tabBtn: {
     flexDirection: 'row',
@@ -1231,5 +1423,156 @@ const styles = StyleSheet.create({
   },
   playlistTracksSection: {
     marginTop: spacing.xs,
+  },
+  topNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  deletePlaylistNavBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.round,
+    backgroundColor: 'rgba(255, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 68, 68, 0.3)',
+  },
+  deletePlaylistNavText: {
+    color: colors.danger,
+    fontSize: typography.sizes.xs,
+    fontWeight: '700',
+  },
+  playlistHeroCoverWrapper: {
+    position: 'relative',
+  },
+  changeCoverBadge: {
+    position: 'absolute',
+    bottom: 4,
+    right: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  changeCoverText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  coverPickerCard: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: borderRadius.xl,
+    padding: spacing.lg,
+    width: '90%',
+    maxWidth: 420,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  coverPickerSectionTitle: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  curatedCoversGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: spacing.md,
+  },
+  curatedCoverItem: {
+    width: '31%',
+    alignItems: 'center',
+    borderRadius: borderRadius.md,
+    padding: 4,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+  },
+  curatedCoverItemActive: {
+    borderColor: colors.primary,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  curatedCoverImage: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: borderRadius.sm,
+    marginBottom: 4,
+  },
+  curatedCoverName: {
+    color: colors.textPrimary,
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  coverDivider: {
+    height: 1,
+    backgroundColor: colors.cardBorder,
+    marginVertical: spacing.md,
+  },
+  pickDeviceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginBottom: spacing.sm,
+  },
+  pickDeviceBtnText: {
+    color: '#FFFFFF',
+    fontSize: typography.sizes.sm,
+    fontWeight: '600',
+  },
+  coverUrlInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  coverUrlInput: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.sm,
+    color: colors.textPrimary,
+    fontSize: typography.sizes.xs,
+  },
+  applyUrlBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  applyUrlBtnDisabled: {
+    opacity: 0.4,
+  },
+  applyUrlBtnText: {
+    color: '#000000',
+    fontSize: typography.sizes.xs,
+    fontWeight: '700',
+  },
+  playlistCardDeleteBtn: {
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

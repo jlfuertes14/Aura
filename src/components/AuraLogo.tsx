@@ -132,9 +132,6 @@ export const AuraLogo: React.FC<AuraLogoProps> = ({
           <Text style={[styles.brandTitle, { fontSize: config.fontSize }]}>
             AURA
           </Text>
-          <Text style={[styles.brandSubtitle, { fontSize: config.subtitleSize }]}>
-            LOSSLESS AUDIO
-          </Text>
         </View>
       )}
     </Animated.View>

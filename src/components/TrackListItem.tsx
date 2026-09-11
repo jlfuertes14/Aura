@@ -1,16 +1,18 @@
-// Reusable Track Row Component with Double-Bezel Framing & Animated Equalizer
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Image, Pressable, ActivityIndicator, Animated } from 'react-native';
-import { Heart, Download, CheckCircle2, Play, Trash2 } from 'lucide-react-native';
+import { Heart, Download, CheckCircle2, Play, Trash2, MoreVertical } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { Track } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
 import { resolveArtworkSource } from '../services/musicService';
+import { SongActionModal } from './SongActionModal';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
 
 interface Props {
   track: Track;
   queueContext?: Track[];
   showDelete?: boolean;
+  playlistId?: string;
 }
 
 // 3-Bar Tactile Animated Equalizer
@@ -69,7 +71,12 @@ const equalizerStyles = StyleSheet.create({
   },
 });
 
-export const TrackListItem: React.FC<Props> = ({ track, queueContext, showDelete = false }) => {
+export const TrackListItem: React.FC<Props> = ({
+  track,
+  queueContext,
+  showDelete = false,
+  playlistId,
+}) => {
   const {
     currentTrack,
     isPlaying,
@@ -80,6 +87,8 @@ export const TrackListItem: React.FC<Props> = ({ track, queueContext, showDelete
     deleteDownloadedTrack,
     activeDownloads,
   } = usePlayer();
+
+  const [showMenu, setShowMenu] = useState(false);
 
   const isCurrentTrack = currentTrack?.id === track.id;
   const isFav = favorites.includes(track.id);
@@ -98,99 +107,121 @@ export const TrackListItem: React.FC<Props> = ({ track, queueContext, showDelete
   };
 
   return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.container,
-        isCurrentTrack && styles.activeContainer,
-        pressed && styles.pressedContainer,
-      ]}
-      onPress={handlePress}
-    >
-      {/* Double-Bezel Hardware Artwork Frame */}
-      <View style={[styles.artworkOuterBezel, isCurrentTrack && styles.artworkActiveGlow]}>
-        <View style={styles.artworkInnerFrame}>
-          <Image source={resolveArtworkSource(track.artworkUrl)} style={styles.artwork} />
-          {isCurrentTrack && (
-            <View style={styles.activeOverlay}>
-              {isPlaying ? (
-                <MiniEqualizer />
-              ) : (
-                <Play size={14} color="#FFF" fill="#FFF" />
-              )}
-            </View>
-          )}
+    <>
+      <Pressable
+        style={({ pressed }) => [
+          styles.container,
+          isCurrentTrack && styles.activeContainer,
+          pressed && styles.pressedContainer,
+        ]}
+        onPress={handlePress}
+      >
+        {/* Double-Bezel Hardware Artwork Frame */}
+        <View style={[styles.artworkOuterBezel, isCurrentTrack && styles.artworkActiveGlow]}>
+          <View style={styles.artworkInnerFrame}>
+            <Image source={resolveArtworkSource(track.artworkUrl)} style={styles.artwork} />
+            {isCurrentTrack && (
+              <View style={styles.activeOverlay}>
+                {isPlaying ? (
+                  <MiniEqualizer />
+                ) : (
+                  <Play size={14} color="#FFF" fill="#FFF" />
+                )}
+              </View>
+            )}
+          </View>
         </View>
-      </View>
 
-      {/* Track Details */}
-      <View style={styles.infoContainer}>
-        <View style={styles.titleRow}>
-          <Text
-            numberOfLines={1}
-            style={[styles.title, isCurrentTrack && styles.activeTitle]}
-          >
-            {track.title}
-          </Text>
+        {/* Track Details */}
+        <View style={styles.infoContainer}>
+          <View style={styles.titleRow}>
+            <Text
+              numberOfLines={1}
+              style={[styles.title, isCurrentTrack && styles.activeTitle]}
+            >
+              {track.title}
+            </Text>
+          </View>
+          <View style={styles.metadataRow}>
+            {track.isDownloaded && (
+              <View style={styles.offlineBadge}>
+                <Text style={styles.offlineBadgeText}>OFFLINE</Text>
+              </View>
+            )}
+            <Text numberOfLines={1} style={styles.artist}>
+              {track.artist}
+            </Text>
+            <Text style={styles.bullet}>•</Text>
+            <Text style={[styles.duration, typography.tabularNumbers]}>
+              {track.fileSize ? track.fileSize : formatDuration(track.duration)}
+            </Text>
+          </View>
         </View>
-        <View style={styles.metadataRow}>
-          {track.isDownloaded && (
-            <View style={styles.offlineBadge}>
-              <Text style={styles.offlineBadgeText}>OFFLINE</Text>
-            </View>
-          )}
-          <Text numberOfLines={1} style={styles.artist}>
-            {track.artist}
-          </Text>
-          <Text style={styles.bullet}>•</Text>
-          <Text style={[styles.duration, typography.tabularNumbers]}>
-            {track.fileSize ? track.fileSize : formatDuration(track.duration)}
-          </Text>
-        </View>
-      </View>
 
-      {/* Action Buttons */}
-      <View style={styles.actionsContainer}>
-        {/* Favorite Toggle Button */}
-        <Pressable
-          style={styles.iconButton}
-          hitSlop={8}
-          onPress={() => toggleFavorite(track.id)}
-        >
-          <Heart
-            size={18}
-            color={isFav ? '#FF4267' : colors.textMuted}
-            fill={isFav ? '#FF4267' : 'transparent'}
-          />
-        </Pressable>
-
-        {/* Download or Delete Button */}
-        {showDelete && isDownloaded ? (
+        {/* Action Buttons */}
+        <View style={styles.actionsContainer}>
+          {/* Favorite Toggle Button */}
           <Pressable
             style={styles.iconButton}
             hitSlop={8}
-            onPress={() => deleteDownloadedTrack(track.id)}
+            onPress={() => toggleFavorite(track.id)}
           >
-            <Trash2 size={18} color={colors.danger} />
+            <Heart
+              size={18}
+              color={isFav ? '#FF4267' : colors.textMuted}
+              fill={isFav ? '#FF4267' : 'transparent'}
+            />
           </Pressable>
-        ) : isDownloading ? (
-          <View style={styles.iconButton}>
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          </View>
-        ) : isDownloaded ? (
-          <View style={styles.iconButton}>
-            <CheckCircle2 size={18} color="rgba(255, 255, 255, 0.85)" />
-          </View>
-        ) : (
+
+          {/* Download or Delete Button */}
+          {showDelete && isDownloaded ? (
+            <Pressable
+              style={styles.iconButton}
+              hitSlop={8}
+              onPress={() => deleteDownloadedTrack(track.id)}
+            >
+              <Trash2 size={18} color={colors.danger} />
+            </Pressable>
+          ) : isDownloading ? (
+            <View style={styles.iconButton}>
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            </View>
+          ) : isDownloaded ? (
+            <View style={styles.iconButton}>
+              <CheckCircle2 size={18} color="rgba(255, 255, 255, 0.85)" />
+            </View>
+          ) : (
+            <Pressable
+              style={styles.iconButton}
+              hitSlop={8}
+              onPress={() => downloadTrack(track)}
+            >
+              <Download size={18} color={colors.textSecondary} />
+            </Pressable>
+          )}
+
+          {/* More Actions 3-Dots Menu */}
           <Pressable
             style={styles.iconButton}
             hitSlop={8}
-            onPress={() => downloadTrack(track)}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+              setShowMenu(true);
+            }}
           >
-            <Download size={18} color={colors.textSecondary} />
+            <MoreVertical size={18} color={colors.textSecondary} />
           </Pressable>
-        )}
-      </View>
-    </Pressable>
+        </View>
+      </Pressable>
+
+      {/* Song Context Menu Modal */}
+      <SongActionModal
+        visible={showMenu}
+        track={track}
+        playlistId={playlistId}
+        onClose={() => setShowMenu(false)}
+      />
+    </>
   );
 };
 

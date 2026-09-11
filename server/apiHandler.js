@@ -650,7 +650,7 @@ function handleApiRequest(req, res, next) {
       },
     })
       .then((r) => r.text())
-      .then((html) => {
+      .then(async (html) => {
         const scriptRegex = /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/;
         const scriptMatch = html.match(scriptRegex);
 
@@ -676,6 +676,38 @@ function handleApiRequest(req, res, next) {
           '';
         const rawTracks = entity.trackList || [];
 
+        // Fetch individual album artwork for each track via Spotify's public oEmbed service in parallel batches
+        console.log(`[SPOTIFY IMPORT] Fetching individual album art for ${rawTracks.length} tracks...`);
+        const trackCoverMap = new Map();
+        const batchSize = 12;
+        for (let i = 0; i < rawTracks.length; i += batchSize) {
+          const batch = rawTracks.slice(i, i + batchSize);
+          await Promise.all(
+            batch.map(async (item) => {
+              const trackIdMatch = (item.uri || '').match(/track:([a-zA-Z0-9]+)/);
+              if (!trackIdMatch) return;
+              const id = trackIdMatch[1];
+              try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 3000);
+                const oembedRes = await fetch(
+                  `https://open.spotify.com/oembed?url=https://open.spotify.com/track/${id}`,
+                  { signal: controller.signal }
+                );
+                clearTimeout(timeout);
+                if (oembedRes.ok) {
+                  const oembedData = await oembedRes.json();
+                  if (oembedData.thumbnail_url) {
+                    trackCoverMap.set(item.uri, oembedData.thumbnail_url);
+                  }
+                }
+              } catch (e) {
+                // Fallback to playlist cover on timeout / error
+              }
+            })
+          );
+        }
+
         const proto = req.headers['x-forwarded-proto'] || 'http';
         const currentHost = req.headers.host || `${getLocalIp()}:8081`;
         const baseUrl = `${proto}://${currentHost}`;
@@ -684,13 +716,14 @@ function handleApiRequest(req, res, next) {
           const trackTitle = item.title || 'Track';
           const trackArtist = item.subtitle || 'Various Artists';
           const durationSec = Math.round((item.duration || 180000) / 1000);
+          const individualCover = trackCoverMap.get(item.uri) || coverUrl;
           return {
             id: `sp-${playlistId}-${idx}-${Date.now()}`,
             title: trackTitle,
             artist: trackArtist,
             album: playlistName,
             duration: durationSec,
-            artworkUrl: coverUrl,
+            artworkUrl: individualCover,
             audioUrl: '', // Resolved on-demand when clicked
             isDownloaded: false,
             source: 'spotify',

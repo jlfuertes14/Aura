@@ -7,7 +7,10 @@ import {
   ScrollView,
   Image,
   Pressable,
+  Platform,
+  StatusBar as RNStatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Sparkles, Play, Flame, Disc3, Radio, Headphones } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { usePlayer } from '../context/PlayerContext';
@@ -21,7 +24,11 @@ interface HomeScreenProps {
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogoPress }) => {
+  const insets = useSafeAreaInsets();
   const { playTrack, currentTrack, isPlaying } = usePlayer();
+
+  const statusBarHeight = Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0;
+  const safeTopPadding = Math.max(insets.top, statusBarHeight, 40) + spacing.md;
 
   const getGreeting = () => {
     const hours = new Date().getHours();
@@ -88,7 +95,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ onLogoPress }) => {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={styles.contentContainer}
+      contentContainerStyle={[styles.contentContainer, { paddingTop: safeTopPadding }]}
       showsVerticalScrollIndicator={false}
     >
       {/* AURA Brand Header & Audio Fidelity Badge */}
@@ -288,20 +295,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 2.5,
   },
-  proPill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.18)',
-  },
-  proPillText: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-  },
   greeting: {
     color: colors.textPrimary,
     fontSize: typography.sizes.xxl,
@@ -309,8 +302,10 @@ const styles = StyleSheet.create({
     letterSpacing: -0.5,
   },
   subGreeting: {
-    color: colors.textSecondary,
-    fontSize: 11,
+    color: colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.3,
     marginTop: 2,
   },
   badgeWrapper: {

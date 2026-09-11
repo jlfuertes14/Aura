@@ -197,9 +197,6 @@ export const AnimatedSplashScreen: React.FC<Props> = ({ onAnimationComplete }) =
       ]}
     >
       <Pressable style={styles.pressableContainer} onPress={exitAnimation}>
-        {/* Background Ambient Radial Glow */}
-        <View style={styles.ambientGlow} />
-
         {/* Centerpiece Arena */}
         <View style={styles.centerArena}>
           {/* Concentric Sonic Ripple Rings */}
@@ -266,7 +263,7 @@ export const AnimatedSplashScreen: React.FC<Props> = ({ onAnimationComplete }) =
         >
           <Text style={styles.brandTitle}>A U R A</Text>
           <Animated.Text style={[styles.brandSubtitle, { opacity: subtitleOpacity }]}>
-            AUDIOPHILE SOUND & OFFLINE VAULT
+            PREMIUM AUDIO EXPERIENCE
           </Animated.Text>
         </Animated.View>
 
@@ -297,13 +294,6 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  ambientGlow: {
-    position: 'absolute',
-    width: SCREEN_WIDTH * 0.85,
-    height: SCREEN_WIDTH * 0.85,
-    borderRadius: (SCREEN_WIDTH * 0.85) / 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   centerArena: {
     width: 140,
