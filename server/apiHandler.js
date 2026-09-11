@@ -179,11 +179,11 @@ function ensureAudioCached(videoId) {
       tempFile,
       '--no-playlist',
       '-f',
-      'ba[ext=m4a]/ba/b',
+      'ba[ext=m4a]/ba/b/18',
       '--extractor-args',
-      'youtube:player_client=ios,android,web',
+      'youtube:player_client=android,ios;player_skip=webpage,configs',
       '--socket-timeout',
-      '15',
+      '20',
       ytUrl,
     ]);
 
@@ -313,10 +313,13 @@ function handleApiRequest(req, res, next) {
       let directUrl = null;
       try {
         const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
-        const stdout = execSync(`"${PYTHON_BIN}" -m yt_dlp -f "ba[ext=m4a]/ba/b" -g "${ytUrl}"`, {
-          timeout: 7000,
-          encoding: 'utf8',
-        });
+        const stdout = execSync(
+          `"${PYTHON_BIN}" -m yt_dlp -f "ba[ext=m4a]/ba/b/18" --extractor-args "youtube:player_client=android,ios;player_skip=webpage,configs" --socket-timeout 10 -g "${ytUrl}"`,
+          {
+            timeout: 10000,
+            encoding: 'utf8',
+          }
+        );
         const lines = stdout.trim().split('\n').filter(Boolean);
         if (lines.length > 0 && lines[lines.length - 1].startsWith('http')) {
           directUrl = lines[lines.length - 1].trim();
@@ -423,11 +426,11 @@ function handleApiRequest(req, res, next) {
           '-',
           '--no-playlist',
           '-f',
-          'ba[ext=m4a]/ba/b',
+          'ba[ext=m4a]/ba/b/18',
           '--extractor-args',
-          'youtube:player_client=ios,android,web',
+          'youtube:player_client=android,ios;player_skip=webpage,configs',
           '--socket-timeout',
-          '15',
+          '20',
           ytUrl,
         ]);
         res.writeHead(200, {
@@ -436,6 +439,10 @@ function handleApiRequest(req, res, next) {
           'Cache-Control': 'no-cache',
         });
         child.stdout.pipe(res);
+        child.on('error', (e) => {
+          console.error('[STREAM PIPE ERROR]:', e.message);
+          try { res.end(); } catch (_) {}
+        });
         req.on('close', () => child.kill('SIGTERM'));
       });
     return;
@@ -479,9 +486,12 @@ function handleApiRequest(req, res, next) {
         '-o',
         '-',
         '--no-playlist',
-        '--quiet',
         '-f',
-        'ba[ext=m4a]/ba/b',
+        'ba[ext=m4a]/ba/b/18',
+        '--extractor-args',
+        'youtube:player_client=android,ios;player_skip=webpage,configs',
+        '--socket-timeout',
+        '20',
         ytUrl,
       ]);
 
@@ -860,8 +870,10 @@ function handleApiRequest(req, res, next) {
       '--dump-json',
       '--flat-playlist',
       '--no-playlist',
+      '--extractor-args',
+      'youtube:player_client=android,ios;player_skip=webpage,configs',
       '--socket-timeout',
-      '8',
+      '10',
       `ytsearch1:${cleanQuery} audio`,
     ];
 
