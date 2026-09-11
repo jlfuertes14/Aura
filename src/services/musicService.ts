@@ -254,7 +254,7 @@ export async function resolveYouTubeAudioStream(
       const audioUrl = data.audioUrl || data.streamUrl;
       const targetId = data.studioVideoId || data.videoId || videoId;
       const titleParam = title ? `&title=${encodeURIComponent(title)}` : '';
-      const downloadUrl = data.downloadUrl || `${getApiBaseUrl(8081)}/api/download?id=${targetId}${titleParam}`;
+      const downloadUrl = data.downloadUrl || `${getApiBaseUrl(5000)}/api/download?id=${targetId}${titleParam}`;
 
       console.log(`[AUDIO STREAM] Successfully resolved stream URL:`, audioUrl, data.isCleanStudio ? '(Clean Studio Audio)' : '');
       return {
