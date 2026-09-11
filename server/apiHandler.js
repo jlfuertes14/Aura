@@ -12,6 +12,39 @@ if (!fs.existsSync(CACHE_DIR)) {
 
 const PYTHON_BIN = process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3');
 
+// Dynamic YouTube cookies support (essential for Cloud/Render servers to bypass bot blocks)
+const COOKIES_ENV_PATH = path.join(CACHE_DIR, 'cookies.txt');
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    fs.writeFileSync(COOKIES_ENV_PATH, process.env.YOUTUBE_COOKIES, 'utf8');
+    console.log('[COOKIES] Loaded YouTube cookies from YOUTUBE_COOKIES');
+  } catch (e) {
+    console.warn('[COOKIES] Failed to write env cookies:', e.message);
+  }
+} else if (process.env.YOUTUBE_COOKIES_BASE64) {
+  try {
+    const decoded = Buffer.from(process.env.YOUTUBE_COOKIES_BASE64, 'base64').toString('utf8');
+    fs.writeFileSync(COOKIES_ENV_PATH, decoded, 'utf8');
+    console.log('[COOKIES] Loaded YouTube cookies from YOUTUBE_COOKIES_BASE64');
+  } catch (e) {
+    console.warn('[COOKIES] Failed to write base64 env cookies:', e.message);
+  }
+}
+
+function getCookieArgs() {
+  if (fs.existsSync('/etc/secrets/cookies.txt')) {
+    return ['--cookies', '/etc/secrets/cookies.txt'];
+  }
+  const localCookie = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(localCookie)) {
+    return ['--cookies', localCookie];
+  }
+  if (fs.existsSync(COOKIES_ENV_PATH)) {
+    return ['--cookies', COOKIES_ENV_PATH];
+  }
+  return [];
+}
+
 function pruneCacheIfNeeded() {
   try {
     const files = fs.readdirSync(CACHE_DIR).map(f => {
@@ -186,6 +219,7 @@ function ensureAudioCached(videoId) {
       'youtube:player_client=visionos,web_embedded,ios',
       '--socket-timeout',
       '20',
+      ...getCookieArgs(),
       ytUrl,
     ]);
 
@@ -315,8 +349,9 @@ function handleApiRequest(req, res, next) {
       let directUrl = null;
       try {
         const ytUrl = `https://www.youtube.com/watch?v=${targetVideoId}`;
+        const cookieStr = getCookieArgs().join(' ');
         const stdout = execSync(
-          `"${PYTHON_BIN}" -m yt_dlp --js-runtimes node -f "ba[ext=m4a]/ba/b/18" --extractor-args "youtube:player_client=visionos,web_embedded,ios" --socket-timeout 10 -g "${ytUrl}"`,
+          `"${PYTHON_BIN}" -m yt_dlp --js-runtimes node -f "ba[ext=m4a]/ba/b/18" --extractor-args "youtube:player_client=visionos,web_embedded,ios" ${cookieStr} --socket-timeout 10 -g "${ytUrl}"`,
           {
             timeout: 10000,
             encoding: 'utf8',
@@ -435,6 +470,7 @@ function handleApiRequest(req, res, next) {
           'youtube:player_client=visionos,web_embedded,ios',
           '--socket-timeout',
           '20',
+          ...getCookieArgs(),
           ytUrl,
         ]);
         res.writeHead(200, {
@@ -498,6 +534,7 @@ function handleApiRequest(req, res, next) {
         'youtube:player_client=visionos,web_embedded,ios',
         '--socket-timeout',
         '20',
+        ...getCookieArgs(),
         ytUrl,
       ]);
 

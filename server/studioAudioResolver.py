@@ -17,6 +17,18 @@ if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR, exist_ok=True)
 
 
+def get_cookie_args():
+    if os.path.exists('/etc/secrets/cookies.txt'):
+        return ['--cookies', '/etc/secrets/cookies.txt']
+    local_cookie = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+    if os.path.exists(local_cookie):
+        return ['--cookies', local_cookie]
+    cache_cookie = os.path.join(CACHE_DIR, 'cookies.txt')
+    if os.path.exists(cache_cookie):
+        return ['--cookies', cache_cookie]
+    return []
+
+
 def clean_title_for_search(title: str) -> str:
     """Strips video tags to extract pure song title and artist."""
     # Remove bracketed/parenthesized tags like (Official Music Video), [4K], etc.
@@ -60,6 +72,7 @@ def resolve_studio_audio(video_id: str) -> dict:
         'node',
         '--extractor-args',
         'youtube:player_client=visionos,web_embedded,ios',
+        *get_cookie_args(),
         f'https://www.youtube.com/watch?v={video_id}'
     ]
 
@@ -123,6 +136,7 @@ def resolve_studio_audio(video_id: str) -> dict:
         '--flat-playlist',
         '--extractor-args',
         'youtube:player_client=visionos,web_embedded,ios',
+        *get_cookie_args(),
         f'ytsearch5:{search_q}'
     ]
 
