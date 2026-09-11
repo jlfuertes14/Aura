@@ -34,7 +34,7 @@ export function getCustomServerHost(): string | null {
  * e.g. 'https://aura-music-server.onrender.com'
  * When set, the standalone APK connects to this cloud URL anywhere in the world on 4G/5G/Wi-Fi!
  */
-export const CLOUD_SERVER_URL: string = '';
+export const CLOUD_SERVER_URL: string = 'https://aura-rohl.onrender.com';
 
 /**
  * Gets the base URL for the backend API services.
