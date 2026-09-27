@@ -24,7 +24,9 @@ function withDesugaring(config) {
     }
 
     // 2. Add desugar_jdk_libs dependency
-    if (!contents.includes('coreLibraryDesugaring')) {
+    // NOTE: Must check for the specific artifact, NOT just 'coreLibraryDesugaring'
+    // because 'coreLibraryDesugaringEnabled' (injected above) contains that substring.
+    if (!contents.includes('desugar_jdk_libs')) {
       contents = contents.replace(
         /dependencies\s*\{/,
         `dependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'`
