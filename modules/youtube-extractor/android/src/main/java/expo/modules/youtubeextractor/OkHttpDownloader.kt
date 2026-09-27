@@ -3,10 +3,39 @@ package expo.modules.youtubeextractor
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+
+class MemoryCookieJar : CookieJar {
+    private val cookieStore = ConcurrentHashMap<String, MutableList<Cookie>>()
+
+    override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+        val host = url.host
+        val current = cookieStore.getOrPut(host) { mutableListOf() }
+        synchronized(current) {
+            cookies.forEach { newCookie ->
+                current.removeAll { it.name == newCookie.name }
+                current.add(newCookie)
+            }
+        }
+    }
+
+    override fun loadForRequest(url: HttpUrl): List<Cookie> {
+        val host = url.host
+        val current = cookieStore[host] ?: return emptyList()
+        val now = System.currentTimeMillis()
+        synchronized(current) {
+            current.removeAll { it.expiresAt < now }
+            return current.toList()
+        }
+    }
+}
 
 class OkHttpDownloader private constructor(private val client: OkHttpClient) : Downloader() {
 
@@ -20,6 +49,7 @@ class OkHttpDownloader private constructor(private val client: OkHttpClient) : D
             return instance ?: synchronized(this) {
                 instance ?: OkHttpDownloader(
                     OkHttpClient.Builder()
+                        .cookieJar(MemoryCookieJar())
                         .readTimeout(30, TimeUnit.SECONDS)
                         .connectTimeout(15, TimeUnit.SECONDS)
                         .followRedirects(true)
@@ -28,6 +58,7 @@ class OkHttpDownloader private constructor(private val client: OkHttpClient) : D
             }
         }
     }
+
 
     override fun execute(request: Request): Response {
         val httpMethod = request.httpMethod()

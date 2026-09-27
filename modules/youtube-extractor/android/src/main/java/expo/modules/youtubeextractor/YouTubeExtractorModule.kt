@@ -15,7 +15,11 @@ class YouTubeExtractorModule : Module() {
 
     OnCreate {
       try {
-        NewPipe.init(OkHttpDownloader.getInstance())
+        NewPipe.init(
+          OkHttpDownloader.getInstance(),
+          org.schabi.newpipe.extractor.localization.Localization.DEFAULT,
+          org.schabi.newpipe.extractor.localization.ContentCountry.DEFAULT
+        )
       } catch (e: Exception) {
         // Already initialized
       }
