@@ -154,12 +154,26 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let activeTrack = track;
 
-      // On-demand YouTube audio resolver for Spotify or query-based tracks without audioUrl
-      if (!activeTrack.localUri && (!activeTrack.audioUrl || activeTrack.source === 'spotify')) {
+      // On-demand YouTube audio resolver for tracks needing a direct stream URL
+      const isDirectStream = !!activeTrack.audioUrl && (
+        activeTrack.audioUrl.startsWith('http') &&
+        !activeTrack.audioUrl.includes('/api/stream') &&
+        !activeTrack.audioUrl.includes('localhost') &&
+        !activeTrack.audioUrl.includes('onrender.com')
+      );
+
+      const needsResolution = !activeTrack.localUri && (
+        !activeTrack.audioUrl ||
+        activeTrack.source === 'spotify' ||
+        activeTrack.audioUrl.includes('/api/stream') ||
+        !isDirectStream
+      );
+
+      if (needsResolution) {
         setIsBuffering(true);
         try {
           const matched = await resolveTrackAudio(activeTrack);
-          if (matched) {
+          if (matched && matched.audioUrl) {
             // Preserve official Spotify album cover rather than replacing with YouTube thumbnail
             const resolvedArtwork = (activeTrack.source === 'spotify' && activeTrack.artworkUrl)
               ? activeTrack.artworkUrl
@@ -168,7 +182,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             activeTrack = {
               ...activeTrack,
               audioUrl: matched.audioUrl,
-              videoId: matched.videoId,
+              videoId: matched.videoId || activeTrack.videoId,
               duration: matched.duration || activeTrack.duration,
               artworkUrl: resolvedArtwork,
               palette: matched.palette || activeTrack.palette,
@@ -180,6 +194,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           setIsBuffering(false);
         }
       }
+
 
       // Update queue if provided
       if (newQueue && newQueue.length > 0) {
@@ -373,17 +388,32 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     try {
       let trackToDownload = track;
-      if (!trackToDownload.audioUrl || trackToDownload.source === 'spotify') {
+      const isDirectStream = !!trackToDownload.audioUrl && (
+        trackToDownload.audioUrl.startsWith('http') &&
+        !trackToDownload.audioUrl.includes('/api/stream') &&
+        !trackToDownload.audioUrl.includes('localhost') &&
+        !trackToDownload.audioUrl.includes('onrender.com')
+      );
+
+      const needsResolution = !trackToDownload.localUri && (
+        !trackToDownload.audioUrl ||
+        trackToDownload.source === 'spotify' ||
+        trackToDownload.audioUrl.includes('/api/stream') ||
+        !isDirectStream
+      );
+
+      if (needsResolution) {
         const matched = await resolveTrackAudio(trackToDownload);
-        if (matched) {
+        if (matched && (matched.downloadUrl || matched.audioUrl)) {
           trackToDownload = {
             ...trackToDownload,
             audioUrl: matched.downloadUrl || matched.audioUrl,
-            videoId: matched.videoId,
+            videoId: matched.videoId || trackToDownload.videoId,
             duration: matched.duration || trackToDownload.duration,
           };
         }
       }
+
 
       const savedTrack = await downloadTrackToDevice(trackToDownload, (progress) => {
         setActiveDownloads((prev) => ({

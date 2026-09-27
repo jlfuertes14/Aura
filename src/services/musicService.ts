@@ -1,5 +1,6 @@
 import { Track, ArtworkPalette, SpotifyPlaylistResult } from '../types/music';
 import { getApiBaseUrl, fetchApiWithFallback } from './apiConfig';
+import { extractAudioStream, searchYouTube } from '../../modules/youtube-extractor';
 
 // Helper to construct companion streaming audio URLs
 export function getCuratedStreamUrl(videoId: string): string {
@@ -232,49 +233,67 @@ export interface ResolvedYouTubeAudio {
 
 /**
  * Resolves the genuine audio stream URL for a YouTube video.
- * Routes directly to Metro's backend API endpoint on port 8081 (or port 5000).
- * Automatically substitutes Music Videos with clean studio audio (no skits, no intros).
+ * Uses on-device native NewPipeExtractor on Android (SimpMusic engine),
+ * with graceful fallback to companion API server if available.
  */
 export async function resolveYouTubeAudioStream(
   videoId: string,
   title?: string
 ): Promise<ResolvedYouTubeAudio> {
+  console.log(`[AUDIO STREAM] Resolving audio stream for YouTube ID: ${videoId}`);
+
+  // 1. Try on-device native extraction (SimpMusic engine via NewPipeExtractor)
+  try {
+    const extracted = await extractAudioStream(videoId);
+    if (extracted && extracted.success && extracted.streamUrl) {
+      console.log(
+        `[AUDIO STREAM] On-device native extraction succeeded for ${videoId} (${extracted.format || 'm4a'}, ${extracted.bitrate || 128}kbps)`
+      );
+      return {
+        audioUrl: extracted.streamUrl,
+        downloadUrl: extracted.streamUrl,
+        palette: undefined,
+        isCleanStudio: false,
+        studioVideoId: videoId,
+        studioTitle: extracted.title || title,
+        studioDuration: extracted.duration,
+      };
+    }
+  } catch (nativeErr: any) {
+    console.warn(`[AUDIO STREAM] On-device native extraction attempt failed:`, nativeErr?.message);
+  }
+
+  // 2. Fallback to companion local dev server if available (e.g. during local node development)
   try {
     const apiPath = `/api/audio?id=${videoId}`;
-    console.log(`[AUDIO STREAM] Requesting YouTube stream for ${videoId}`);
-
+    console.log(`[AUDIO STREAM] Falling back to companion server for ${videoId}`);
     const response = await fetchApiWithFallback(apiPath);
 
-    if (!response.ok) {
-      throw new Error(`Server returned HTTP ${response.status}`);
-    }
+    if (response.ok) {
+      const data = await response.json();
+      if (data.audioUrl || data.streamUrl) {
+        const audioUrl = data.audioUrl || data.streamUrl;
+        const targetId = data.studioVideoId || data.videoId || videoId;
+        const titleParam = title ? `&title=${encodeURIComponent(title)}` : '';
+        const downloadUrl = data.downloadUrl || `${getApiBaseUrl(5000)}/api/download?id=${targetId}${titleParam}`;
 
-    const data = await response.json();
-    if (data.audioUrl || data.streamUrl) {
-      const audioUrl = data.audioUrl || data.streamUrl;
-      const targetId = data.studioVideoId || data.videoId || videoId;
-      const titleParam = title ? `&title=${encodeURIComponent(title)}` : '';
-      const downloadUrl = data.downloadUrl || `${getApiBaseUrl(5000)}/api/download?id=${targetId}${titleParam}`;
-
-      console.log(`[AUDIO STREAM] Successfully resolved stream URL:`, audioUrl, data.isCleanStudio ? '(Clean Studio Audio)' : '');
-      return {
-        audioUrl,
-        downloadUrl,
-        palette: data.palette || undefined,
-        isCleanStudio: !!data.isCleanStudio,
-        studioVideoId: targetId,
-        studioTitle: data.studioTitle || undefined,
-        studioDuration: typeof data.studioDuration === 'number' ? data.studioDuration : undefined,
-      };
-    } else {
-      throw new Error(data.error || 'No audio stream returned from server');
+        console.log(`[AUDIO STREAM] Companion server resolved stream URL:`, audioUrl, data.isCleanStudio ? '(Clean Studio Audio)' : '');
+        return {
+          audioUrl,
+          downloadUrl,
+          palette: data.palette || undefined,
+          isCleanStudio: !!data.isCleanStudio,
+          studioVideoId: targetId,
+          studioTitle: data.studioTitle || undefined,
+          studioDuration: typeof data.studioDuration === 'number' ? data.studioDuration : undefined,
+        };
+      }
     }
   } catch (err: any) {
-    console.error(`[AUDIO STREAM ERROR] Failed to resolve YouTube audio for ${videoId}:`, err);
-    throw new Error(
-      `Unable to extract audio from YouTube: ${err.message || 'Server connection timeout'}. Please ensure Metro or server is running.`
-    );
+    console.warn(`[AUDIO STREAM] Companion server resolution failed for ${videoId}:`, err?.message);
   }
+
+  throw new Error(`Unable to extract audio from YouTube for ID: ${videoId}`);
 }
 
 /**
@@ -311,53 +330,85 @@ export interface MatchResolvedTrack {
 
 /**
  * Resolves a Spotify (or query-based) track to its YouTube audio stream counterpart on demand.
+ * First leverages on-device YouTube extraction / search before falling back to companion server.
  */
 export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrack> {
-  // If track already has a working YouTube videoId, we can directly stream it
+  // If track already has a working YouTube videoId, directly extract the audio stream on-device
   if (track.videoId && track.source !== 'spotify') {
-    const audioUrl = `${getApiBaseUrl(5000)}/api/stream?id=${track.videoId}`;
-    const downloadUrl = `${getApiBaseUrl(5000)}/api/download?id=${track.videoId}&title=${encodeURIComponent(track.title)}`;
+    const resolved = await resolveYouTubeAudioStream(track.videoId, track.title);
     return {
       videoId: track.videoId,
       title: track.title,
       artist: track.artist,
-      duration: track.duration,
-      audioUrl,
-      downloadUrl,
+      duration: resolved.studioDuration || track.duration,
+      audioUrl: resolved.audioUrl,
+      downloadUrl: resolved.downloadUrl,
       artworkUrl: track.artworkUrl,
-      palette: track.palette,
+      palette: resolved.palette || track.palette,
     };
   }
 
   const query = `${track.artist} ${track.title}`.trim();
-  const apiPath = `/api/resolve?q=${encodeURIComponent(query)}&title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`;
   console.log(`[RESOLVE SERVICE] Resolving audio stream for "${query}"`);
 
-  const response = await fetchApiWithFallback(apiPath);
-  if (!response.ok) {
-    throw new Error(`Server returned HTTP ${response.status} resolving track audio`);
+  // 1. Try on-device native search first
+  try {
+    const searchRes = await searchYouTube(query);
+    if (searchRes && searchRes.success && searchRes.results.length > 0) {
+      const bestMatch = searchRes.results[0];
+      if (bestMatch.videoId) {
+        console.log(`[RESOLVE SERVICE] On-device search matched: "${bestMatch.title}" (${bestMatch.videoId})`);
+        const resolved = await resolveYouTubeAudioStream(bestMatch.videoId, bestMatch.title);
+        const finalArtwork = (track.source === 'spotify' && track.artworkUrl)
+          ? track.artworkUrl
+          : (track.artworkUrl || bestMatch.thumbnailUrl);
+
+        return {
+          videoId: bestMatch.videoId,
+          title: track.title || bestMatch.title,
+          artist: track.artist || bestMatch.author,
+          duration: resolved.studioDuration || bestMatch.duration || track.duration,
+          audioUrl: resolved.audioUrl,
+          downloadUrl: resolved.downloadUrl,
+          artworkUrl: finalArtwork,
+          palette: resolved.palette || track.palette,
+        };
+      }
+    }
+  } catch (searchErr: any) {
+    console.warn('[RESOLVE SERVICE] Native search match failed, trying companion API:', searchErr?.message);
   }
 
-  const data = await response.json();
-  if (data.success && data.videoId) {
-    const finalArtwork = (track.source === 'spotify' && track.artworkUrl)
-      ? track.artworkUrl
-      : (track.artworkUrl || data.artworkUrl);
+  // 2. Fallback to companion backend API
+  try {
+    const apiPath = `/api/resolve?q=${encodeURIComponent(query)}&title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist)}`;
+    const response = await fetchApiWithFallback(apiPath);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.videoId) {
+        const finalArtwork = (track.source === 'spotify' && track.artworkUrl)
+          ? track.artworkUrl
+          : (track.artworkUrl || data.artworkUrl);
 
-    return {
-      videoId: data.videoId,
-      title: data.title || track.title,
-      artist: data.artist || track.artist,
-      duration: data.duration || track.duration,
-      audioUrl: data.audioUrl,
-      downloadUrl: data.downloadUrl,
-      artworkUrl: finalArtwork,
-      palette: data.palette || track.palette,
-    };
+        return {
+          videoId: data.videoId,
+          title: data.title || track.title,
+          artist: data.artist || track.artist,
+          duration: data.duration || track.duration,
+          audioUrl: data.audioUrl,
+          downloadUrl: data.downloadUrl,
+          artworkUrl: finalArtwork,
+          palette: data.palette || track.palette,
+        };
+      }
+    }
+  } catch (err: any) {
+    console.error('[RESOLVE SERVICE] Failed to resolve track via companion API:', err);
   }
 
-  throw new Error(data.error || 'Unable to resolve matching audio stream');
+  throw new Error(`Unable to resolve matching audio stream for: ${track.artist} - ${track.title}`);
 }
+
 
 export { fetchRemoteArtworkPalette } from '../utils/artworkColors';
 

@@ -1,0 +1,64 @@
+package expo.modules.youtubeextractor
+
+import org.schabi.newpipe.extractor.downloader.Downloader
+import org.schabi.newpipe.extractor.downloader.Request
+import org.schabi.newpipe.extractor.downloader.Response
+import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+
+class OkHttpDownloader private constructor(private val client: OkHttpClient) : Downloader() {
+
+    companion object {
+        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+        
+        @Volatile
+        private var instance: OkHttpDownloader? = null
+
+        fun getInstance(): OkHttpDownloader {
+            return instance ?: synchronized(this) {
+                instance ?: OkHttpDownloader(
+                    OkHttpClient.Builder()
+                        .readTimeout(30, TimeUnit.SECONDS)
+                        .connectTimeout(15, TimeUnit.SECONDS)
+                        .followRedirects(true)
+                        .build()
+                ).also { instance = it }
+            }
+        }
+    }
+
+    override fun execute(request: Request): Response {
+        val httpMethod = request.httpMethod()
+        val url = request.url()
+        val headers = request.headers()
+        val dataToSend = request.dataToSend()
+
+        val reqBuilder = okhttp3.Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+
+        for ((key, values) in headers) {
+            reqBuilder.removeHeader(key)
+            for (value in values) {
+                reqBuilder.addHeader(key, value)
+            }
+        }
+
+        val requestBody = dataToSend?.toRequestBody(null)
+        reqBuilder.method(httpMethod, requestBody)
+
+        val okResponse = client.newCall(reqBuilder.build()).execute()
+        val responseBody = okResponse.body?.string().orEmpty()
+        val responseHeaders = okResponse.headers.toMultimap()
+
+        return Response(
+            okResponse.code,
+            okResponse.message,
+            responseHeaders,
+            responseBody,
+            okResponse.request.url.toString()
+        )
+    }
+}

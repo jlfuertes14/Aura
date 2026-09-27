@@ -2,7 +2,7 @@
   "expo": {
     "name": "AURA Music",
     "slug": "aura-music",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -41,7 +41,11 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "extraMavenRepos": [
+              "https://jitpack.io"
+            ],
+            "extraProguardRules": "-keep class org.schabi.newpipe.extractor.** { *; }\n-keep class org.mozilla.javascript.** { *; }\n-dontwarn org.schabi.newpipe.extractor.**\n-dontwarn org.mozilla.javascript.**"
           }
         }
       ]

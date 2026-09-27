@@ -29,12 +29,11 @@ export function getCustomServerHost(): string | null {
   return memoryCustomHost;
 }
 /**
- * Production Cloud Backend URL (e.g. on Render)
- * Once your service is deployed on Render, paste your URL here:
- * e.g. 'https://aura-music-server.onrender.com'
- * When set, the standalone APK connects to this cloud URL anywhere in the world on 4G/5G/Wi-Fi!
+ * Production Cloud Backend URL (Optional)
+ * Left empty by default so the app uses on-device native extraction (SimpMusic engine)
+ * without depending on external cloud servers or facing datacenter IP bans.
  */
-export const CLOUD_SERVER_URL: string = 'https://aura-rohl.onrender.com';
+export const CLOUD_SERVER_URL: string = '';
 
 /**
  * Gets the base URL for the backend API services.

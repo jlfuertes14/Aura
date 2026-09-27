@@ -1,0 +1,7 @@
+{
+  "name": "youtube-extractor",
+  "version": "1.0.0",
+  "description": "On-device native YouTube stream extractor using NewPipeExtractor for Android",
+  "main": "index.ts",
+  "types": "index.ts"
+}
