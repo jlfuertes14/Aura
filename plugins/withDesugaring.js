@@ -8,12 +8,19 @@ function withDesugaring(config) {
   return withAppBuildGradle(config, (modConfig) => {
     let contents = modConfig.modResults.contents;
 
-    // 1. Enable coreLibraryDesugaringEnabled true in compileOptions
+    // 1. Ensure compileOptions with coreLibraryDesugaringEnabled is present in android { ... }
     if (!contents.includes('coreLibraryDesugaringEnabled true')) {
-      contents = contents.replace(
-        /compileOptions\s*\{/,
-        `compileOptions {\n        coreLibraryDesugaringEnabled true`
-      );
+      if (contents.includes('compileOptions {')) {
+        contents = contents.replace(
+          /compileOptions\s*\{/,
+          `compileOptions {\n        coreLibraryDesugaringEnabled true`
+        );
+      } else {
+        contents = contents.replace(
+          /android\s*\{/,
+          `android {\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n        sourceCompatibility JavaVersion.VERSION_1_8\n        targetCompatibility JavaVersion.VERSION_1_8\n    }`
+        );
+      }
     }
 
     // 2. Add desugar_jdk_libs dependency
