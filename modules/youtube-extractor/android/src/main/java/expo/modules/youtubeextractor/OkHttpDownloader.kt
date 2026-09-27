@@ -37,7 +37,7 @@ class MemoryCookieJar : CookieJar {
     }
 }
 
-class OkHttpDownloader private constructor(private val client: OkHttpClient) : Downloader() {
+class OkHttpDownloader private constructor(private val client: OkHttpClient) : Downloader {
 
     companion object {
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
@@ -70,14 +70,20 @@ class OkHttpDownloader private constructor(private val client: OkHttpClient) : D
             .url(url)
             .header("User-Agent", USER_AGENT)
 
-        for ((key, values) in headers) {
+        headers?.forEach { (key, values) ->
             reqBuilder.removeHeader(key)
-            for (value in values) {
+            values?.forEach { value ->
                 reqBuilder.addHeader(key, value)
             }
         }
 
-        val requestBody = dataToSend?.toRequestBody(null)
+        val requestBody = if (dataToSend != null) {
+            dataToSend.toRequestBody(null as okhttp3.MediaType?)
+        } else if (httpMethod.equals("POST", ignoreCase = true) || httpMethod.equals("PUT", ignoreCase = true)) {
+            ByteArray(0).toRequestBody(null as okhttp3.MediaType?)
+        } else {
+            null
+        }
         reqBuilder.method(httpMethod, requestBody)
 
         val okResponse = client.newCall(reqBuilder.build()).execute()
