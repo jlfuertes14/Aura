@@ -48,7 +48,8 @@
             "extraProguardRules": "-keep class org.schabi.newpipe.extractor.** { *; }\n-keep class org.mozilla.javascript.** { *; }\n-dontwarn org.schabi.newpipe.extractor.**\n-dontwarn org.mozilla.javascript.**"
           }
         }
-      ]
+      ],
+      "./plugins/withDesugaring"
     ],
     "extra": {
       "eas": {
