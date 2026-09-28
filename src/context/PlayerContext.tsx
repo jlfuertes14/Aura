@@ -16,6 +16,8 @@ import {
   savePlaylists,
 } from '../services/storageService';
 import { CURATED_TRACKS, resolveTrackAudio, resolveYouTubeAudioStream, fetchSpotifyPlaylist } from '../services/musicService';
+import { streamCacheService } from '../services/streamCacheService';
+import { fetchLyrics } from '../services/lyricsService';
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -190,6 +192,21 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let activeTrack = track;
 
+      // 1. Check if track already has a cached stream file on local storage
+      if (!activeTrack.localUri) {
+        try {
+          const cachedStreamUri = await streamCacheService.getCachedAudio(activeTrack.id, activeTrack.videoId);
+          if (cachedStreamUri) {
+            activeTrack = {
+              ...activeTrack,
+              localUri: cachedStreamUri,
+            };
+          }
+        } catch (cacheErr) {
+          console.warn('Stream cache lookup note:', cacheErr);
+        }
+      }
+
       // On-demand YouTube audio resolver for tracks needing a direct stream URL
       const isDirectStream = !!activeTrack.audioUrl && (
         activeTrack.audioUrl.startsWith('http') &&
@@ -267,7 +284,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setPosition(0);
       setDuration(activeTrack.duration || 0);
 
-      // Check if track is downloaded locally on device
+      // Check if track is downloaded locally on device or in stream cache
       const audioUri = activeTrack.localUri || activeTrack.audioUrl;
       if (audioUri) {
         // Resolve valid artwork URI: supports local cached file://, remote http(s), or original artwork
@@ -291,6 +308,25 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         // Pass activeTrack.duration so audioEngine configures accurate notification player timeline
         await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true, metadata, activeTrack.duration || 0);
         setIsPlaying(true);
+
+        // Background stream audio caching and lyrics prefetching:
+        // If track is streamed remotely, automatically cache it locally so that
+        // replaying or looping uses local flash storage instead of heating up the device radio & CPU
+        if (!activeTrack.localUri && activeTrack.audioUrl && activeTrack.audioUrl.startsWith('http')) {
+          streamCacheService.cacheStreamAudio(
+            activeTrack.id,
+            activeTrack.audioUrl,
+            activeTrack.videoId,
+            activeTrack.title,
+            activeTrack.artist,
+            activeTrack.duration
+          ).catch((cacheErr) => {
+            console.warn('Background stream caching note:', cacheErr);
+          });
+        }
+
+        // Pre-fetch & persistently cache synchronized lyrics in background
+        fetchLyrics(activeTrack.title, activeTrack.artist, activeTrack.duration, activeTrack.id).catch(() => {});
       }
     } catch (error) {
       console.error('Error playing track:', error);
@@ -400,6 +436,25 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       await playTrack(q[q.length - 1]);
     }
   };
+
+  const skipNextRef = useRef(skipNext);
+  const skipPrevRef = useRef(skipPrev);
+  skipNextRef.current = skipNext;
+  skipPrevRef.current = skipPrev;
+
+  // Connect lock screen & notification media player Next/Previous skip buttons
+  useEffect(() => {
+    audioEngine.setNotificationActionCallback((action) => {
+      if (action === 'next') {
+        skipNextRef.current();
+      } else if (action === 'prev') {
+        skipPrevRef.current();
+      }
+    });
+    return () => {
+      audioEngine.setNotificationActionCallback(null);
+    };
+  }, []);
 
   const toggleShuffle = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});

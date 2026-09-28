@@ -1,0 +1,402 @@
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
+index c76a9fd..5123175 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioPlayer.kt
+@@ -144,6 +144,10 @@ class AudioPlayer(
+     }
+   }
+ 
++  fun handleNotificationAction(action: String) {
++    sendStatusUpdate(mapOf("notificationAction" to action))
++  }
++
+   override fun onPlaybackStateUpdated(playbackState: Int, justFinished: Boolean) {
+     val updateMap = mutableMapOf<String, Any?>(
+       "playbackState" to playbackStateToString(playbackState)
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
+index 86880d9..cec4baa 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/AudioRecords.kt
+@@ -55,7 +55,8 @@ class Metadata(
+   @Field val title: String?,
+   @Field val artist: String?,
+   @Field val albumTitle: String?,
+-  @Field val artworkUrl: URL?
++  @Field val artworkUrl: URL?,
++  @Field val duration: Double? = null
+ ) : Record
+ 
+ enum class AndroidOutputFormat(val value: String) : Enumerable {
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
+index 196a5d5..ad98c3d 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
+@@ -90,6 +90,8 @@ class AudioControlsService : MediaSessionService() {
+ 
+         ACTION_SEEK_FORWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition + SEEK_INTERVAL_MS)
+         ACTION_SEEK_BACKWARD -> currentPlayerRef.seekTo(currentPlayerRef.currentPosition - SEEK_INTERVAL_MS)
++        ACTION_NEXT -> onNextTrack()
++        ACTION_PREVIOUS -> onPreviousTrack()
+       }
+     }
+ 
+@@ -192,17 +194,15 @@ class AudioControlsService : MediaSessionService() {
+       val compactViewIndices = mutableListOf<Int>()
+       var currentIndex = 0
+ 
+-      if (currentOptions?.showSeekBackward == true) {
+-        builder.addAction(
+-          NotificationCompat.Action(
+-            androidx.media3.session.R.drawable.media3_icon_skip_back,
+-            "Seek Backward",
+-            buildActionPendingIntent(ACTION_SEEK_BACKWARD)
+-          )
++      builder.addAction(
++        NotificationCompat.Action(
++          androidx.media3.session.R.drawable.media3_icon_previous,
++          "Previous",
++          buildActionPendingIntent(ACTION_PREVIOUS)
+         )
+-        compactViewIndices.add(currentIndex)
+-        currentIndex++
+-      }
++      )
++      compactViewIndices.add(currentIndex)
++      currentIndex++
+ 
+       builder.addAction(
+         NotificationCompat.Action(
+@@ -218,16 +218,14 @@ class AudioControlsService : MediaSessionService() {
+       compactViewIndices.add(currentIndex)
+       currentIndex++
+ 
+-      if (currentOptions?.showSeekForward == true) {
+-        builder.addAction(
+-          NotificationCompat.Action(
+-            androidx.media3.session.R.drawable.media3_icon_skip_forward,
+-            "Seek Forward",
+-            buildActionPendingIntent(ACTION_SEEK_FORWARD)
+-          )
++      builder.addAction(
++        NotificationCompat.Action(
++          androidx.media3.session.R.drawable.media3_icon_next,
++          "Next",
++          buildActionPendingIntent(ACTION_NEXT)
+         )
+-        compactViewIndices.add(currentIndex)
+-      }
++      )
++      compactViewIndices.add(currentIndex)
+ 
+       style.setShowActionsInCompactView(*compactViewIndices.toIntArray())
+     }
+@@ -240,17 +238,16 @@ class AudioControlsService : MediaSessionService() {
+     val session = mediaSession ?: return
+     val mediaButtons = mutableListOf<CommandButton>()
+ 
+-    // Add seek backward button if enabled
+-    if (currentOptions?.showSeekBackward == true) {
+-      mediaButtons.add(
+-        CommandButton.Builder(CommandButton.ICON_SKIP_BACK_10)
+-          .setDisplayName("Seek Backward")
+-          .setEnabled(true)
+-          .setSessionCommand(SessionCommand(ACTION_SEEK_BACKWARD, Bundle.EMPTY))
+-          .setSlots(CommandButton.SLOT_BACK)
+-          .build()
+-      )
+-    }
++    // Add previous track button (always present)
++    mediaButtons.add(
++      CommandButton.Builder(CommandButton.ICON_PREVIOUS)
++        .setDisplayName("Previous")
++        .setEnabled(true)
++        .setSessionCommand(SessionCommand(ACTION_PREVIOUS, Bundle.EMPTY))
++        .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
++        .setSlots(CommandButton.SLOT_BACK)
++        .build()
++    )
+ 
+     // Add play/pause button (always present)
+     mediaButtons.add(
+@@ -262,17 +259,16 @@ class AudioControlsService : MediaSessionService() {
+         .build()
+     )
+ 
+-    // Add seek forward button if enabled
+-    if (currentOptions?.showSeekForward == true) {
+-      mediaButtons.add(
+-        CommandButton.Builder(CommandButton.ICON_SKIP_FORWARD_10)
+-          .setDisplayName("Seek Forward")
+-          .setEnabled(true)
+-          .setSessionCommand(SessionCommand(ACTION_SEEK_FORWARD, Bundle.EMPTY))
+-          .setSlots(CommandButton.SLOT_FORWARD)
+-          .build()
+-      )
+-    }
++    // Add next track button (always present)
++    mediaButtons.add(
++      CommandButton.Builder(CommandButton.ICON_NEXT)
++        .setDisplayName("Next")
++        .setEnabled(true)
++        .setSessionCommand(SessionCommand(ACTION_NEXT, Bundle.EMPTY))
++        .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
++        .setSlots(CommandButton.SLOT_FORWARD)
++        .build()
++    )
+ 
+     session.setCustomLayout(mediaButtons)
+     session.setMediaButtonPreferences(mediaButtons)
+@@ -367,11 +363,11 @@ class AudioControlsService : MediaSessionService() {
+ 
+       appContext?.mainQueue?.launch {
+         val context = appContext?.reactContext ?: return@launch
+-        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options)).apply {
++        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options), WeakReference(this@AudioControlsService)).apply {
+           updateMetadata(metadata)
+         }
+         val session = MediaSession.Builder(context, sessionPlayer)
+-          .setCallback(AudioMediaSessionCallback())
++          .setCallback(AudioMediaSessionCallback(WeakReference(this@AudioControlsService)))
+           .build()
+ 
+         // Replace the basic media session with a session connected to our playback service.
+@@ -448,11 +444,11 @@ class AudioControlsService : MediaSessionService() {
+       sessionMetadataPlayer = null
+       appContext?.mainQueue?.launch {
+         val context = appContext?.reactContext ?: return@launch
+-        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options)).apply {
++        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options), WeakReference(this@AudioControlsService)).apply {
+           updateMetadata(metadata)
+         }
+         val session = MediaSession.Builder(context, sessionPlayer)
+-          .setCallback(AudioMediaSessionCallback())
++          .setCallback(AudioMediaSessionCallback(WeakReference(this@AudioControlsService)))
+           .build()
+ 
+         player.mediaSession.release()
+@@ -548,6 +544,12 @@ class AudioControlsService : MediaSessionService() {
+       currentPlayer?.ref?.removeListener(listener)
+       playbackListener = null
+     }
++  fun onNextTrack() {
++    currentPlayer?.handleNotificationAction("next")
++  }
++
++  fun onPreviousTrack() {
++    currentPlayer?.handleNotificationAction("prev")
+   }
+ 
+   companion object {
+@@ -559,6 +561,9 @@ class AudioControlsService : MediaSessionService() {
+     const val ACTION_SEEK_FORWARD = "expo.modules.audio.action.SEEK_FORWARD"
+     const val ACTION_SEEK_BACKWARD = "expo.modules.audio.action.SEEK_BACKWARD"
+ 
++    const val ACTION_NEXT = "expo.modules.audio.action.NEXT"
++    const val ACTION_PREVIOUS = "expo.modules.audio.action.PREVIOUS"
++
+     const val SEEK_INTERVAL_MS = 10000L
+   }
+ }
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
+index 839aaef..f118a3e 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioMediaSessionCallback.kt
+@@ -8,9 +8,12 @@ import androidx.media3.session.SessionResult
+ import androidx.annotation.OptIn
+ import androidx.media3.common.util.UnstableApi
+ import com.google.common.util.concurrent.ListenableFuture
++import java.lang.ref.WeakReference
+ 
+ @OptIn(UnstableApi::class)
+-class AudioMediaSessionCallback : MediaSession.Callback {
++class AudioMediaSessionCallback(
++  private val serviceRef: WeakReference<AudioControlsService>? = null
++) : MediaSession.Callback {
+   override fun onConnect(
+     session: MediaSession,
+     controller: MediaSession.ControllerInfo
+@@ -24,17 +27,19 @@ class AudioMediaSessionCallback : MediaSession.Callback {
+             .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+             .add(Player.COMMAND_SEEK_FORWARD)
+             .add(Player.COMMAND_SEEK_BACK)
+-            // Remove track navigation commands
+-            .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+-            .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+-            .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+-            .remove(Player.COMMAND_SEEK_TO_NEXT)
++            // Enable track navigation commands so headsets, auto & lockscreen keys work
++            .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
++            .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
++            .add(Player.COMMAND_SEEK_TO_PREVIOUS)
++            .add(Player.COMMAND_SEEK_TO_NEXT)
+             .build()
+         )
+         .setAvailableSessionCommands(
+           MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+             .add(SessionCommand(AudioControlsService.ACTION_SEEK_BACKWARD, Bundle.EMPTY))
+             .add(SessionCommand(AudioControlsService.ACTION_SEEK_FORWARD, Bundle.EMPTY))
++            .add(SessionCommand(AudioControlsService.ACTION_NEXT, Bundle.EMPTY))
++            .add(SessionCommand(AudioControlsService.ACTION_PREVIOUS, Bundle.EMPTY))
+             .build()
+         )
+         .build()
+@@ -56,6 +61,12 @@ class AudioMediaSessionCallback : MediaSession.Callback {
+       AudioControlsService.ACTION_SEEK_BACKWARD -> {
+         session.player.seekTo(session.player.currentPosition - AudioControlsService.SEEK_INTERVAL_MS)
+       }
++      AudioControlsService.ACTION_NEXT -> {
++        serviceRef?.get()?.onNextTrack()
++      }
++      AudioControlsService.ACTION_PREVIOUS -> {
++        serviceRef?.get()?.onPreviousTrack()
++      }
+     }
+     return super.onCustomCommand(session, controller, command, args)
+   }
+diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
+index 18203a3..7bd99cd 100644
+--- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
++++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
+@@ -3,12 +3,17 @@ package expo.modules.audio.service
+ import android.os.Handler
+ import android.os.Looper
+ import androidx.core.net.toUri
++import androidx.media3.common.C
+ import androidx.media3.common.FlagSet
+ import androidx.media3.common.ForwardingPlayer
++import androidx.media3.common.ForwardingTimeline
+ import androidx.media3.common.MediaMetadata
+ import androidx.media3.common.Player
++import androidx.media3.common.Timeline
+ import androidx.media3.common.util.UnstableApi
++import androidx.media3.common.util.Util
+ import expo.modules.audio.Metadata
++import java.lang.ref.WeakReference
+ import java.util.IdentityHashMap
+ 
+ // MediaSession reads artwork from Player.mediaMetadata, but expo-audio lock-screen metadata can
+@@ -16,12 +21,95 @@ import java.util.IdentityHashMap
+ // metadata updates without replacing the active media item on the real ExoPlayer instance.
+ @UnstableApi
+ internal class MetadataInjectingPlayer(
+-  player: Player
++  player: Player,
++  private val serviceRef: WeakReference<AudioControlsService>? = null
+ ) : ForwardingPlayer(player) {
+   private val handler = Handler(applicationLooper)
+   private val listeners = IdentityHashMap<Player.Listener, Player.Listener>()
+   private var injectedMetadata: Metadata? = null
+ 
++  override fun getAvailableCommands(): Player.Commands {
++    return super.getAvailableCommands().buildUpon()
++      .add(Player.COMMAND_SEEK_TO_NEXT)
++      .add(Player.COMMAND_SEEK_TO_PREVIOUS)
++      .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
++      .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
++      .build()
++  }
++
++  override fun seekToNext() {
++    serviceRef?.get()?.onNextTrack()
++  }
++
++  override fun seekToNextMediaItem() {
++    serviceRef?.get()?.onNextTrack()
++  }
++
++  override fun seekToPrevious() {
++    serviceRef?.get()?.onPreviousTrack()
++  }
++
++  override fun seekToPreviousMediaItem() {
++    serviceRef?.get()?.onPreviousTrack()
++  }
++
++  override fun getCurrentTimeline(): Timeline {
++    val realTimeline = super.getCurrentTimeline()
++    val fallbackSec = injectedMetadata?.duration
++    val durationMs = if (fallbackSec != null && fallbackSec > 0) (fallbackSec * 1000).toLong() else 0L
++
++    if (durationMs > 0 && !realTimeline.isEmpty) {
++      return object : ForwardingTimeline(realTimeline) {
++        override fun getWindow(windowIndex: Int, window: Timeline.Window, defaultPositionProjectionUs: Long): Timeline.Window {
++          val w = super.getWindow(windowIndex, window, defaultPositionProjectionUs)
++          if (w.durationUs == C.TIME_UNSET || w.durationUs <= 0) {
++            w.durationUs = Util.msToUs(durationMs)
++          }
++          w.isSeekable = true
++          w.isDynamic = false
++          return w
++        }
++      }
++    }
++    return realTimeline
++  }
++
++  override fun getDuration(): Long {
++    val realDuration = super.getDuration()
++    if (realDuration > 0 && realDuration != C.TIME_UNSET) {
++      return realDuration
++    }
++    val fallbackSec = injectedMetadata?.duration
++    if (fallbackSec != null && fallbackSec > 0) {
++      return (fallbackSec * 1000).toLong()
++    }
++    return realDuration
++  }
++
++  override fun isCurrentMediaItemLive(): Boolean {
++    val fallbackSec = injectedMetadata?.duration
++    if (fallbackSec != null && fallbackSec > 0) {
++      return false
++    }
++    return super.isCurrentMediaItemLive()
++  }
++
++  override fun isCurrentMediaItemDynamic(): Boolean {
++    val fallbackSec = injectedMetadata?.duration
++    if (fallbackSec != null && fallbackSec > 0) {
++      return false
++    }
++    return super.isCurrentMediaItemDynamic()
++  }
++
++  override fun isCurrentMediaItemSeekable(): Boolean {
++    val fallbackSec = injectedMetadata?.duration
++    if (fallbackSec != null && fallbackSec > 0) {
++      return true
++    }
++    return super.isCurrentMediaItemSeekable()
++  }
++
+   override fun addListener(listener: Player.Listener) {
+     val forwardingListener = synchronized(listeners) {
+       listeners.getOrPut(listener) { MetadataForwardingListener(listener) }
+@@ -65,6 +153,7 @@ internal class MetadataInjectingPlayer(
+     val events = Player.Events(
+       FlagSet.Builder()
+         .add(Player.EVENT_MEDIA_METADATA_CHANGED)
++        .add(Player.EVENT_TIMELINE_CHANGED)
+         .build()
+     )
+     val currentListeners = synchronized(listeners) {
+@@ -73,6 +162,7 @@ internal class MetadataInjectingPlayer(
+ 
+     currentListeners.forEach {
+       it.onMediaMetadataChanged(newMetadata)
++      it.onTimelineChanged(currentTimeline, Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE)
+     }
+     currentListeners.forEach {
+       it.onEvents(this, events)
+diff --git a/node_modules/expo-audio/src/Audio.types.ts b/node_modules/expo-audio/src/Audio.types.ts
+index 906753f..b619c56 100644
+--- a/node_modules/expo-audio/src/Audio.types.ts
++++ b/node_modules/expo-audio/src/Audio.types.ts
+@@ -664,6 +664,7 @@ export type AudioMetadata = {
+   artist?: string;
+   albumTitle?: string;
+   artworkUrl?: string;
++  duration?: number;
+ };
+ 
+ /**

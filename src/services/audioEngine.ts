@@ -18,6 +18,10 @@ export type PlaybackCallback = (status: {
   didJustFinish: boolean;
 }) => void;
 
+export type ExtendedAudioMetadata = AudioMetadata & {
+  duration?: number;
+};
+
 class AudioEngine {
   private player: AudioPlayer | null = null;
   private isConfigured: boolean = false;
@@ -30,9 +34,14 @@ class AudioEngine {
   private lastKnownDuration: number = 0;
   private lastReportTime: number = 0;
   private isAudioPlaying: boolean = false;
-  private currentMetadata: AudioMetadata | null = null;
+  private currentMetadata: ExtendedAudioMetadata | null = null;
   private lockScreenInitializedForTrack: boolean = false;
   private fallbackDuration: number = 0;
+  private notificationActionCallback: ((action: 'next' | 'prev') => void) | null = null;
+
+  public setNotificationActionCallback(callback: ((action: 'next' | 'prev') => void) | null): void {
+    this.notificationActionCallback = callback;
+  }
 
   /**
    * Configures native audio session for background playback and lock-screen continuation.
@@ -96,7 +105,7 @@ class AudioEngine {
   /**
    * Updates metadata (title, artist, album, artwork) displayed on lockscreen & notification shade.
    */
-  public updateLockScreen(metadata: AudioMetadata): void {
+  public updateLockScreen(metadata: ExtendedAudioMetadata): void {
     this.currentMetadata = metadata;
     if (this.player) {
       try {
@@ -114,22 +123,27 @@ class AudioEngine {
     uri: string,
     onStatusUpdate: PlaybackCallback,
     shouldPlay: boolean = true,
-    metadata?: AudioMetadata,
+    metadata?: ExtendedAudioMetadata,
     knownDuration?: number
   ): Promise<void> {
     await this.configureAudioMode();
-    this.statusCallback = onStatusUpdate;
-    this.currentMetadata = metadata || null;
-    this.lockScreenInitializedForTrack = false;
     this.fallbackDuration = (typeof knownDuration === 'number' && Number.isFinite(knownDuration) && knownDuration > 0)
       ? knownDuration
-      : 0;
+      : (typeof metadata?.duration === 'number' && metadata.duration > 0 ? metadata.duration : 0);
     this.lastKnownDuration = this.fallbackDuration;
+
+    const enrichedMetadata: ExtendedAudioMetadata | null = metadata
+      ? {
+          ...metadata,
+          duration: metadata.duration || (this.fallbackDuration > 0 ? this.fallbackDuration : undefined),
+        }
+      : null;
+    this.currentMetadata = enrichedMetadata;
 
     // If same URI is loaded, toggle or resume
     if (this.player && this.lastUri === uri) {
-      if (metadata) {
-        this.updateLockScreen(metadata);
+      if (enrichedMetadata) {
+        this.updateLockScreen(enrichedMetadata);
       }
       if (shouldPlay) {
         this.play();
@@ -159,11 +173,11 @@ class AudioEngine {
       // Enable Android Notification Player & Lock Screen controls
       // Pass isLiveStream: false so Android SystemUI does not strip COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM
       // and properly activates the seekbar / progress timeline on streaming playback
-      if (metadata) {
+      if (enrichedMetadata) {
         try {
-          player.setActiveForLockScreen(true, metadata, {
-            showSeekForward: true,
-            showSeekBackward: true,
+          player.setActiveForLockScreen(true, enrichedMetadata, {
+            showSeekForward: false,
+            showSeekBackward: false,
             isLiveStream: false,
           });
         } catch (lockErr) {
@@ -220,6 +234,15 @@ class AudioEngine {
   }
 
   private handlePlaybackStatusUpdate = (status: AudioStatus) => {
+    // Intercept hardware / lockscreen notification Next and Previous skip actions
+    const rawAction = (status as any)?.notificationAction;
+    if (rawAction === 'next' || rawAction === 'prev') {
+      if (this.notificationActionCallback) {
+        this.notificationActionCallback(rawAction);
+      }
+      return;
+    }
+
     const isPlaying = Boolean(status.playing);
     const rawPos = status.currentTime;
     const rawDur = status.duration;
@@ -247,9 +270,14 @@ class AudioEngine {
     if (effectiveDuration > 0 && !this.lockScreenInitializedForTrack && this.currentMetadata && this.player) {
       this.lockScreenInitializedForTrack = true;
       try {
-        this.player.setActiveForLockScreen(true, this.currentMetadata, {
-          showSeekForward: true,
-          showSeekBackward: true,
+        const updatedMeta: AudioMetadata = {
+          ...this.currentMetadata,
+          duration: effectiveDuration,
+        };
+        this.currentMetadata = updatedMeta;
+        this.player.setActiveForLockScreen(true, updatedMeta, {
+          showSeekForward: false,
+          showSeekBackward: false,
           isLiveStream: false,
         });
       } catch (lockErr) {
