@@ -127,6 +127,7 @@ class AudioEngine {
     knownDuration?: number
   ): Promise<void> {
     await this.configureAudioMode();
+    this.statusCallback = onStatusUpdate;
     this.fallbackDuration = (typeof knownDuration === 'number' && Number.isFinite(knownDuration) && knownDuration > 0)
       ? knownDuration
       : (typeof metadata?.duration === 'number' && metadata.duration > 0 ? metadata.duration : 0);
@@ -142,6 +143,7 @@ class AudioEngine {
 
     // If same URI is loaded, toggle or resume
     if (this.player && this.lastUri === uri) {
+      this.statusCallback = onStatusUpdate;
       if (enrichedMetadata) {
         this.updateLockScreen(enrichedMetadata);
       }
@@ -275,11 +277,7 @@ class AudioEngine {
           duration: effectiveDuration,
         };
         this.currentMetadata = updatedMeta;
-        this.player.setActiveForLockScreen(true, updatedMeta, {
-          showSeekForward: false,
-          showSeekBackward: false,
-          isLiveStream: false,
-        });
+        this.updateLockScreen(updatedMeta);
       } catch (lockErr) {
         console.warn('AudioEngine lock screen timeline synchronization warning:', lockErr);
       }

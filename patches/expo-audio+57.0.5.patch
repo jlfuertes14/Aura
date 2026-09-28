@@ -254,7 +254,7 @@ index 839aaef..f118a3e 100644
      return super.onCustomCommand(session, controller, command, args)
    }
 diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
-index 18203a3..7bd99cd 100644
+index 18203a3..4a433b5 100644
 --- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
 +++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/MetadataInjectingPlayer.kt
 @@ -3,12 +3,17 @@ package expo.modules.audio.service
@@ -275,7 +275,7 @@ index 18203a3..7bd99cd 100644
  import java.util.IdentityHashMap
  
  // MediaSession reads artwork from Player.mediaMetadata, but expo-audio lock-screen metadata can
-@@ -16,12 +21,95 @@ import java.util.IdentityHashMap
+@@ -16,12 +21,111 @@ import java.util.IdentityHashMap
  // metadata updates without replacing the active media item on the real ExoPlayer instance.
  @UnstableApi
  internal class MetadataInjectingPlayer(
@@ -328,6 +328,22 @@ index 18203a3..7bd99cd 100644
 +          w.isDynamic = false
 +          return w
 +        }
++
++        override fun getPeriod(periodIndex: Int, period: Timeline.Period, setIds: Boolean): Timeline.Period {
++          val p = super.getPeriod(periodIndex, period, setIds)
++          if (p.durationUs == C.TIME_UNSET || p.durationUs <= 0) {
++            p.durationUs = Util.msToUs(durationMs)
++          }
++          return p
++        }
++
++        override fun getPeriodByUid(periodUid: Any, period: Timeline.Period): Timeline.Period {
++          val p = super.getPeriodByUid(periodUid, period)
++          if (p.durationUs == C.TIME_UNSET || p.durationUs <= 0) {
++            p.durationUs = Util.msToUs(durationMs)
++          }
++          return p
++        }
 +      }
 +    }
 +    return realTimeline
@@ -372,7 +388,19 @@ index 18203a3..7bd99cd 100644
    override fun addListener(listener: Player.Listener) {
      val forwardingListener = synchronized(listeners) {
        listeners.getOrPut(listener) { MetadataForwardingListener(listener) }
-@@ -65,6 +153,7 @@ internal class MetadataInjectingPlayer(
+@@ -55,16 +159,18 @@ internal class MetadataInjectingPlayer(
+     }
+ 
+     val previousMetadata = mediaMetadata
++    val previousDuration = injectedMetadata?.duration
+     injectedMetadata = metadata
+     val newMetadata = mediaMetadata
+ 
+-    if (previousMetadata == newMetadata) {
++    if (previousMetadata == newMetadata && previousDuration == metadata?.duration) {
+       return
+     }
+ 
      val events = Player.Events(
        FlagSet.Builder()
          .add(Player.EVENT_MEDIA_METADATA_CHANGED)
@@ -380,7 +408,7 @@ index 18203a3..7bd99cd 100644
          .build()
      )
      val currentListeners = synchronized(listeners) {
-@@ -73,6 +162,7 @@ internal class MetadataInjectingPlayer(
+@@ -73,6 +179,7 @@ internal class MetadataInjectingPlayer(
  
      currentListeners.forEach {
        it.onMediaMetadataChanged(newMetadata)
@@ -388,6 +416,29 @@ index 18203a3..7bd99cd 100644
      }
      currentListeners.forEach {
        it.onEvents(this, events)
+@@ -86,6 +193,10 @@ internal class MetadataInjectingPlayer(
+       listener.onMediaMetadataChanged(this@MetadataInjectingPlayer.mediaMetadata)
+     }
+ 
++    override fun onTimelineChanged(timeline: Timeline, reason: Int) {
++      listener.onTimelineChanged(this@MetadataInjectingPlayer.currentTimeline, reason)
++    }
++
+     override fun onEvents(player: Player, events: Player.Events) {
+       listener.onEvents(this@MetadataInjectingPlayer, events)
+     }
+diff --git a/node_modules/expo-audio/build/Audio.types.d.ts b/node_modules/expo-audio/build/Audio.types.d.ts
+index 2560478..c634cc4 100644
+--- a/node_modules/expo-audio/build/Audio.types.d.ts
++++ b/node_modules/expo-audio/build/Audio.types.d.ts
+@@ -618,6 +618,7 @@ export type AudioMetadata = {
+     artist?: string;
+     albumTitle?: string;
+     artworkUrl?: string;
++    duration?: number;
+ };
+ /**
+  * Loop mode for audio playlist playback.
 diff --git a/node_modules/expo-audio/src/Audio.types.ts b/node_modules/expo-audio/src/Audio.types.ts
 index 906753f..b619c56 100644
 --- a/node_modules/expo-audio/src/Audio.types.ts
