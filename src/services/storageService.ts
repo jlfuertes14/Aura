@@ -190,7 +190,9 @@ export async function downloadTrackToDevice(
       ...track,
       isDownloaded: true,
       localUri: targetFileUri,
-      artworkUrl: localArtworkUri,
+      localArtworkUri: localArtworkUri,
+      originalArtworkUrl: track.originalArtworkUrl || (track.artworkUrl?.startsWith('http') ? track.artworkUrl : undefined),
+      artworkUrl: localArtworkUri || track.artworkUrl,
       fileSize: sizeFormatted,
       downloadDate: new Date().toISOString(),
     };

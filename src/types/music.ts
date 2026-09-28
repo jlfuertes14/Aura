@@ -18,6 +18,8 @@ export interface Track {
   audioUrl: string; // remote stream URL or local file:// URI
   isDownloaded: boolean;
   localUri?: string; // local file path on device storage if downloaded
+  localArtworkUri?: string; // local cached artwork file:// URI
+  originalArtworkUrl?: string; // original remote http(s) artwork URL
   fileSize?: string; // e.g. "4.2 MB"
   downloadDate?: string; // ISO date string
   source: 'youtube' | 'curated' | 'local' | 'url' | 'spotify';

@@ -224,13 +224,23 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Check if track is downloaded locally on device
       const audioUri = activeTrack.localUri || activeTrack.audioUrl;
       if (audioUri) {
+        // Resolve valid artwork URI: supports local cached file://, remote http(s), or original artwork
+        const candidateArt = activeTrack.localArtworkUri || activeTrack.artworkUrl || activeTrack.originalArtworkUrl;
+        const validArtwork = typeof candidateArt === 'string' && (
+          candidateArt.startsWith('http://') ||
+          candidateArt.startsWith('https://') ||
+          candidateArt.startsWith('file://')
+        )
+          ? candidateArt
+          : typeof activeTrack.originalArtworkUrl === 'string' && activeTrack.originalArtworkUrl.startsWith('http')
+            ? activeTrack.originalArtworkUrl
+            : undefined;
+
         const metadata = {
           title: activeTrack.title,
           artist: activeTrack.artist,
           albumTitle: activeTrack.album || 'Aura Music',
-          artworkUrl: typeof activeTrack.artworkUrl === 'string' && activeTrack.artworkUrl.startsWith('http')
-            ? activeTrack.artworkUrl
-            : undefined,
+          artworkUrl: validArtwork,
         };
         await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true, metadata);
         setIsPlaying(true);

@@ -55,6 +55,7 @@ import { resolveArtworkSource } from '../services/musicService';
 import { Track } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
 import { useTrackArtworkPalette, isLightBackground } from '../utils/artworkColors';
+import { audioEngine } from '../services/audioEngine';
 import { AudioVisualizer } from './AudioVisualizer';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
 
@@ -212,6 +213,284 @@ const DraggableQueueItem: React.FC<DraggableQueueItemProps> = ({
     </Animated.View>
   );
 };
+
+// --- Ultra-smooth Isolated Scrubber (0 Re-renders of Full Player during gestures) ---
+interface SmoothScrubberProps {
+  position: number;
+  duration: number;
+  onSeek: (seconds: number) => void;
+}
+
+const formatScrubberTime = (secs: number) => {
+  const safe = Number.isFinite(secs) ? Math.max(0, secs) : 0;
+  const mins = Math.floor(safe / 60);
+  const rem = Math.floor(safe % 60);
+  return `${mins}:${rem < 10 ? '0' : ''}${rem}`;
+};
+
+const SmoothScrubber: React.FC<SmoothScrubberProps> = React.memo(({ position, duration, onSeek }) => {
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubPosition, setScrubPosition] = useState(0);
+  const scrubberBarRef = useRef<View>(null);
+  const scrubberPageX = useRef(24);
+  const scrubberWidth = useRef(SCREEN_WIDTH - 48);
+
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
+  const onSeekRef = useRef(onSeek);
+  onSeekRef.current = onSeek;
+
+  const handleTouch = (evt: any, gestureState: any, isFinal: boolean) => {
+    const barWidth = scrubberWidth.current > 0 ? scrubberWidth.current : (SCREEN_WIDTH - 48);
+    const barLeft = scrubberPageX.current;
+
+    let currentX = 0;
+    if (typeof evt?.nativeEvent?.pageX === 'number' && evt.nativeEvent.pageX > 0) {
+      currentX = evt.nativeEvent.pageX;
+    } else if (typeof gestureState?.moveX === 'number' && gestureState.moveX > 0) {
+      currentX = gestureState.moveX;
+    } else if (typeof gestureState?.x0 === 'number') {
+      currentX = gestureState.x0 + (gestureState.dx || 0);
+    }
+
+    const relX = currentX - barLeft;
+    const ratio = Math.max(0, Math.min(1, relX / barWidth));
+    const trackDur = durationRef.current > 0 ? durationRef.current : 0;
+
+    if (trackDur <= 0) return;
+
+    const targetSec = ratio * trackDur;
+    const safeSec = Number.isFinite(targetSec) ? Math.max(0, Math.min(trackDur, targetSec)) : 0;
+
+    if (isFinal) {
+      setIsScrubbing(false);
+      onSeekRef.current(safeSec);
+    } else {
+      setScrubPosition(safeSec);
+    }
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: (evt, gestureState) => {
+        setIsScrubbing(true);
+        handleTouch(evt, gestureState, false);
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        handleTouch(evt, gestureState, false);
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        handleTouch(evt, gestureState, true);
+      },
+      onPanResponderTerminate: () => {
+        setIsScrubbing(false);
+      },
+      onPanResponderTerminationRequest: () => false,
+    })
+  ).current;
+
+  const handleLayout = (e: LayoutChangeEvent) => {
+    const { width } = e.nativeEvent.layout;
+    if (width > 0) scrubberWidth.current = width;
+    scrubberBarRef.current?.measure((x, y, w, h, pageX) => {
+      if (typeof pageX === 'number' && Number.isFinite(pageX)) {
+        scrubberPageX.current = pageX;
+      }
+      if (typeof w === 'number' && Number.isFinite(w) && w > 0) {
+        scrubberWidth.current = w;
+      }
+    });
+  };
+
+  const displayPosition = isScrubbing ? scrubPosition : position;
+  const progressPercent = duration > 0
+    ? Math.max(0, Math.min(100, (displayPosition / duration) * 100))
+    : 0;
+
+  return (
+    <View style={styles.scrubberSection}>
+      <View
+        ref={scrubberBarRef}
+        style={styles.scrubberBar}
+        onLayout={handleLayout}
+        {...panResponder.panHandlers}
+      >
+        <View style={[styles.scrubberTrack, { backgroundColor: 'rgba(255, 255, 255, 0.20)' }]} pointerEvents="none">
+          <View style={[styles.scrubberFill, { width: `${progressPercent}%`, backgroundColor: '#FFFFFF' }]} pointerEvents="none" />
+          <View
+            style={[
+              styles.scrubberThumb,
+              { left: `${progressPercent}%`, backgroundColor: '#FFFFFF' },
+              isScrubbing && styles.scrubberThumbActive,
+            ]}
+            pointerEvents="none"
+          />
+        </View>
+      </View>
+
+      <View style={styles.timeRow}>
+        <Text style={[styles.timeText, { color: 'rgba(255, 255, 255, 0.75)' }]}>{formatScrubberTime(displayPosition)}</Text>
+        <Text style={[styles.timeText, { color: 'rgba(255, 255, 255, 0.75)' }]}>{formatScrubberTime(duration)}</Text>
+      </View>
+    </View>
+  );
+});
+
+// --- Ultra-smooth Isolated Volume Slider (Throttled Native Audio + 0 Re-renders of Full Player) ---
+interface SmoothVolumeSliderProps {
+  volume: number;
+  isMuted: boolean;
+  onVolumeChange: (vol: number) => void;
+  onToggleMute: () => void;
+}
+
+const SmoothVolumeSlider: React.FC<SmoothVolumeSliderProps> = React.memo(({
+  volume,
+  isMuted,
+  onVolumeChange,
+  onToggleMute,
+}) => {
+  const [isSliding, setIsSliding] = useState(false);
+  const [localVolume, setLocalVolume] = useState(volume);
+  const volumeBarRef = useRef<View>(null);
+  const volumePageX = useRef(60);
+  const volumeWidth = useRef(SCREEN_WIDTH - 140);
+
+  const onVolumeChangeRef = useRef(onVolumeChange);
+  onVolumeChangeRef.current = onVolumeChange;
+
+  const lastNativeVolumeCall = useRef(0);
+
+  useEffect(() => {
+    if (!isSliding) {
+      setLocalVolume(isMuted ? 0 : volume);
+    }
+  }, [volume, isMuted, isSliding]);
+
+  const handleTouch = (evt: any, gestureState: any, isFinal: boolean) => {
+    const barWidth = volumeWidth.current > 0 ? volumeWidth.current : (SCREEN_WIDTH - 140);
+    const barLeft = volumePageX.current;
+
+    let currentX = 0;
+    if (typeof evt?.nativeEvent?.pageX === 'number' && evt.nativeEvent.pageX > 0) {
+      currentX = evt.nativeEvent.pageX;
+    } else if (typeof gestureState?.moveX === 'number' && gestureState.moveX > 0) {
+      currentX = gestureState.moveX;
+    } else if (typeof gestureState?.x0 === 'number') {
+      currentX = gestureState.x0 + (gestureState.dx || 0);
+    }
+
+    const relX = currentX - barLeft;
+    const ratio = Math.max(0, Math.min(1, relX / barWidth));
+    const safeRatio = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 0;
+
+    setLocalVolume(safeRatio);
+
+    // Throttle direct audio engine volume calls to ~40ms to keep gesture thread at 60-120fps
+    const now = Date.now();
+    if (isFinal || now - lastNativeVolumeCall.current > 40) {
+      lastNativeVolumeCall.current = now;
+      audioEngine.setVolume(safeRatio).catch(() => {});
+    }
+
+    if (isFinal) {
+      setIsSliding(false);
+      onVolumeChangeRef.current(safeRatio);
+    }
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: (evt, gestureState) => {
+        setIsSliding(true);
+        handleTouch(evt, gestureState, false);
+      },
+      onPanResponderMove: (evt, gestureState) => {
+        handleTouch(evt, gestureState, false);
+      },
+      onPanResponderRelease: (evt, gestureState) => {
+        handleTouch(evt, gestureState, true);
+      },
+      onPanResponderTerminate: () => {
+        setIsSliding(false);
+      },
+      onPanResponderTerminationRequest: () => false,
+    })
+  ).current;
+
+  const handleLayout = (e: LayoutChangeEvent) => {
+    const { width } = e.nativeEvent.layout;
+    if (width > 0) volumeWidth.current = width;
+    volumeBarRef.current?.measure((x, y, w, h, pageX) => {
+      if (typeof pageX === 'number' && Number.isFinite(pageX)) {
+        volumePageX.current = pageX;
+      }
+      if (typeof w === 'number' && Number.isFinite(w) && w > 0) {
+        volumeWidth.current = w;
+      }
+    });
+  };
+
+  const displayVolume = isSliding ? localVolume : (isMuted ? 0 : volume);
+  const volumePercent = Math.round(Math.max(0, Math.min(1, displayVolume)) * 100);
+
+  return (
+    <View style={styles.volumeSection}>
+      <Pressable
+        style={styles.volumeBtn}
+        hitSlop={8}
+        onPress={onToggleMute}
+        accessibilityLabel={isMuted || displayVolume === 0 ? 'Unmute' : 'Mute'}
+      >
+        {isMuted || displayVolume === 0 ? (
+          <VolumeX size={20} color="rgba(255, 255, 255, 0.40)" />
+        ) : displayVolume < 0.5 ? (
+          <Volume1 size={20} color="rgba(255, 255, 255, 0.75)" />
+        ) : (
+          <Volume2 size={20} color="rgba(255, 255, 255, 0.75)" />
+        )}
+      </Pressable>
+
+      <View
+        ref={volumeBarRef}
+        style={styles.volumeBarContainer}
+        onLayout={handleLayout}
+        {...panResponder.panHandlers}
+      >
+        <View style={[styles.volumeTrack, { backgroundColor: 'rgba(255, 255, 255, 0.20)' }]} pointerEvents="none">
+          <View
+            style={[
+              styles.volumeFill,
+              { width: `${volumePercent}%`, backgroundColor: '#FFFFFF' },
+              isMuted && styles.volumeFillMuted,
+            ]}
+            pointerEvents="none"
+          />
+          <View
+            style={[
+              styles.volumeThumb,
+              { left: `${volumePercent}%`, backgroundColor: '#FFFFFF' },
+              isSliding && styles.volumeThumbActive,
+            ]}
+            pointerEvents="none"
+          />
+        </View>
+      </View>
+
+      <Text style={[styles.volumePercentText, { color: 'rgba(255, 255, 255, 0.75)' }]}>
+        {isMuted ? 'Muted' : `${volumePercent}%`}
+      </Text>
+    </View>
+  );
+});
 
 export const FullScreenPlayer: React.FC = () => {
   const {
@@ -386,213 +665,12 @@ export const FullScreenPlayer: React.FC = () => {
     outputRange: ['0deg', '360deg'],
   });
 
-  // --- Interactive Scrubber Slider (Playing Time) ---
-  const [isScrubbing, setIsScrubbing] = useState(false);
-  const [scrubPosition, setScrubPosition] = useState(0);
-  const scrubberBarRef = useRef<View>(null);
-  const scrubberPageX = useRef(24);
-  const scrubberWidth = useRef(SCREEN_WIDTH - 48);
-
-  const durationRef = useRef(duration);
-  durationRef.current = duration;
-  const currentTrackRef = useRef(currentTrack);
-  currentTrackRef.current = currentTrack;
-  const seekToRef = useRef(seekTo);
-  seekToRef.current = seekTo;
-
-  const getTrackDuration = () => {
-    if (typeof durationRef.current === 'number' && Number.isFinite(durationRef.current) && durationRef.current > 0) {
-      return durationRef.current;
-    }
-    if (currentTrackRef.current?.duration && Number.isFinite(currentTrackRef.current.duration) && currentTrackRef.current.duration > 0) {
-      return currentTrackRef.current.duration;
-    }
-    return 0;
-  };
-
-  const getBarMetrics = (
-    barRef: React.RefObject<View | null>,
-    fallbackPageX: number,
-    fallbackWidth: number
-  ) => {
-    if (Platform.OS === 'web' && barRef.current) {
-      const el = barRef.current as unknown as HTMLElement;
-      if (el && typeof el.getBoundingClientRect === 'function') {
-        const rect = el.getBoundingClientRect();
-        if (rect && rect.width > 0) {
-          return { pageX: rect.left, width: rect.width };
-        }
-      }
-    }
-    return { pageX: fallbackPageX, width: fallbackWidth };
-  };
-
-  const handleScrubberTouch = (evt: any, gestureState: any, isFinal: boolean) => {
-    const metrics = getBarMetrics(scrubberBarRef, scrubberPageX.current, scrubberWidth.current);
-    const barWidth = metrics.width > 0 ? metrics.width : (SCREEN_WIDTH - 48);
-    const barLeft = metrics.pageX;
-
-    let currentX = 0;
-    if (typeof evt.nativeEvent.pageX === 'number' && evt.nativeEvent.pageX > 0) {
-      currentX = evt.nativeEvent.pageX;
-    } else if (typeof gestureState.moveX === 'number' && gestureState.moveX > 0) {
-      currentX = gestureState.moveX;
-    } else if (typeof gestureState.x0 === 'number') {
-      currentX = gestureState.x0 + (gestureState.dx || 0);
-    }
-
-    const relX = currentX - barLeft;
-    const ratio = Math.max(0, Math.min(1, relX / barWidth));
-    const trackDur = getTrackDuration();
-
-    if (trackDur <= 0) return;
-
-    const targetSec = ratio * trackDur;
-    const safeSec = Number.isFinite(targetSec) ? Math.max(0, Math.min(trackDur, targetSec)) : 0;
-
-    if (isFinal) {
-      setIsScrubbing(false);
-      seekToRef.current(safeSec);
-    } else {
-      setScrubPosition(safeSec);
-    }
-  };
-
-  const scrubberPanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
-      onPanResponderGrant: (evt, gestureState) => {
-        setIsScrubbing(true);
-        handleScrubberTouch(evt, gestureState, false);
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        handleScrubberTouch(evt, gestureState, false);
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        handleScrubberTouch(evt, gestureState, true);
-      },
-      onPanResponderTerminate: () => {
-        setIsScrubbing(false);
-      },
-      onPanResponderTerminationRequest: () => false,
-    })
-  ).current;
-
-  const handleScrubberLayout = (e: LayoutChangeEvent) => {
-    const { width } = e.nativeEvent.layout;
-    if (width > 0) scrubberWidth.current = width;
-    scrubberBarRef.current?.measure((x, y, w, h, pageX) => {
-      if (typeof pageX === 'number' && Number.isFinite(pageX)) {
-        scrubberPageX.current = pageX;
-      }
-      if (typeof w === 'number' && Number.isFinite(w) && w > 0) {
-        scrubberWidth.current = w;
-      }
-    });
-  };
-
-  // --- Interactive Volume Slider ---
-  const [isSlidingVolume, setIsSlidingVolume] = useState(false);
-  const [localVolume, setLocalVolume] = useState(volume);
-  const volumeBarRef = useRef<View>(null);
-  const volumePageX = useRef(60);
-  const volumeWidth = useRef(SCREEN_WIDTH - 140);
-  const setVolumeRef = useRef(setPlayerVolume);
-  setVolumeRef.current = setPlayerVolume;
-
-  useEffect(() => {
-    if (!isSlidingVolume) {
-      setLocalVolume(isMuted ? 0 : volume);
-    }
-  }, [volume, isMuted, isSlidingVolume]);
-
-  const handleVolumeTouch = (evt: any, gestureState: any, isFinal: boolean) => {
-    const metrics = getBarMetrics(volumeBarRef, volumePageX.current, volumeWidth.current);
-    const barWidth = metrics.width > 0 ? metrics.width : (SCREEN_WIDTH - 140);
-    const barLeft = metrics.pageX;
-
-    let currentX = 0;
-    if (typeof evt.nativeEvent.pageX === 'number' && evt.nativeEvent.pageX > 0) {
-      currentX = evt.nativeEvent.pageX;
-    } else if (typeof gestureState.moveX === 'number' && gestureState.moveX > 0) {
-      currentX = gestureState.moveX;
-    } else if (typeof gestureState.x0 === 'number') {
-      currentX = gestureState.x0 + (gestureState.dx || 0);
-    }
-
-    const relX = currentX - barLeft;
-    const ratio = Math.max(0, Math.min(1, relX / barWidth));
-    const safeRatio = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : 0;
-
-    setLocalVolume(safeRatio);
-    setVolumeRef.current(safeRatio);
-
-    if (isFinal) {
-      setIsSlidingVolume(false);
-    }
-  };
-
-  const volumePanResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onStartShouldSetPanResponderCapture: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponderCapture: () => true,
-      onPanResponderGrant: (evt, gestureState) => {
-        setIsSlidingVolume(true);
-        handleVolumeTouch(evt, gestureState, false);
-      },
-      onPanResponderMove: (evt, gestureState) => {
-        handleVolumeTouch(evt, gestureState, false);
-      },
-      onPanResponderRelease: (evt, gestureState) => {
-        handleVolumeTouch(evt, gestureState, true);
-      },
-      onPanResponderTerminate: () => {
-        setIsSlidingVolume(false);
-      },
-      onPanResponderTerminationRequest: () => false,
-    })
-  ).current;
-
-  const handleVolumeLayout = (e: LayoutChangeEvent) => {
-    const { width } = e.nativeEvent.layout;
-    if (width > 0) volumeWidth.current = width;
-    volumeBarRef.current?.measure((x, y, w, h, pageX) => {
-      if (typeof pageX === 'number' && Number.isFinite(pageX)) {
-        volumePageX.current = pageX;
-      }
-      if (typeof w === 'number' && Number.isFinite(w) && w > 0) {
-        volumeWidth.current = w;
-      }
-    });
-  };
-
   if (!currentTrack) return null;
 
   const isFav = favorites.includes(currentTrack.id);
   const downloadState = activeDownloads[currentTrack.id];
   const isDownloading = downloadState && downloadState.status === 'downloading';
   const isDownloaded = currentTrack.isDownloaded || (currentTrack.localUri && currentTrack.localUri.length > 0);
-
-  const formatTime = (secs: number) => {
-    const safe = Number.isFinite(secs) ? Math.max(0, secs) : 0;
-    const mins = Math.floor(safe / 60);
-    const rem = Math.floor(safe % 60);
-    return `${mins}:${rem < 10 ? '0' : ''}${rem}`;
-  };
-
-  const currentDisplayPosition = isScrubbing ? scrubPosition : position;
-  const currentDisplayDuration = getTrackDuration();
-  const progressPercent = currentDisplayDuration > 0
-    ? Math.max(0, Math.min(100, (currentDisplayPosition / currentDisplayDuration) * 100))
-    : 0;
-
-  const displayVolume = isSlidingVolume ? localVolume : (isMuted ? 0 : volume);
-  const volumePercent = Math.round(Math.max(0, Math.min(1, displayVolume)) * 100);
 
   return (
     <Modal
@@ -860,31 +938,11 @@ export const FullScreenPlayer: React.FC = () => {
             </View>
 
             {/* Scrubber Timeline with Interactive Sliding */}
-            <View style={styles.scrubberSection}>
-              <View
-                ref={scrubberBarRef}
-                style={styles.scrubberBar}
-                onLayout={handleScrubberLayout}
-                {...scrubberPanResponder.panHandlers}
-              >
-                <View style={[styles.scrubberTrack, { backgroundColor: 'rgba(255, 255, 255, 0.20)' }]} pointerEvents="none">
-                  <View style={[styles.scrubberFill, { width: `${progressPercent}%`, backgroundColor: '#FFFFFF' }]} pointerEvents="none" />
-                  <View
-                    style={[
-                      styles.scrubberThumb,
-                      { left: `${progressPercent}%`, backgroundColor: '#FFFFFF' },
-                      isScrubbing && styles.scrubberThumbActive,
-                    ]}
-                    pointerEvents="none"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.timeRow}>
-                <Text style={[styles.timeText, { color: 'rgba(255, 255, 255, 0.75)' }]}>{formatTime(currentDisplayPosition)}</Text>
-                <Text style={[styles.timeText, { color: 'rgba(255, 255, 255, 0.75)' }]}>{formatTime(currentDisplayDuration)}</Text>
-              </View>
-            </View>
+            <SmoothScrubber
+              position={position}
+              duration={currentTrack.duration || duration}
+              onSeek={seekTo}
+            />
 
             {/* Main Hero Controls */}
             <View style={styles.controlsRow}>
@@ -950,52 +1008,12 @@ export const FullScreenPlayer: React.FC = () => {
             </View>
 
             {/* Interactive Volume Slider Row */}
-            <View style={styles.volumeSection}>
-              <Pressable
-                style={styles.volumeBtn}
-                hitSlop={8}
-                onPress={toggleMute}
-                accessibilityLabel={isMuted || displayVolume === 0 ? 'Unmute' : 'Mute'}
-              >
-                {isMuted || displayVolume === 0 ? (
-                  <VolumeX size={20} color="rgba(255, 255, 255, 0.40)" />
-                ) : displayVolume < 0.5 ? (
-                  <Volume1 size={20} color="rgba(255, 255, 255, 0.75)" />
-                ) : (
-                  <Volume2 size={20} color="rgba(255, 255, 255, 0.75)" />
-                )}
-              </Pressable>
-
-              <View
-                ref={volumeBarRef}
-                style={styles.volumeBarContainer}
-                onLayout={handleVolumeLayout}
-                {...volumePanResponder.panHandlers}
-              >
-                <View style={[styles.volumeTrack, { backgroundColor: 'rgba(255, 255, 255, 0.20)' }]} pointerEvents="none">
-                  <View
-                    style={[
-                      styles.volumeFill,
-                      { width: `${volumePercent}%`, backgroundColor: '#FFFFFF' },
-                      isMuted && styles.volumeFillMuted,
-                    ]}
-                    pointerEvents="none"
-                  />
-                  <View
-                    style={[
-                      styles.volumeThumb,
-                      { left: `${volumePercent}%`, backgroundColor: '#FFFFFF' },
-                      isSlidingVolume && styles.volumeThumbActive,
-                    ]}
-                    pointerEvents="none"
-                  />
-                </View>
-              </View>
-
-              <Text style={[styles.volumePercentText, { color: 'rgba(255, 255, 255, 0.75)' }]}>
-                {isMuted ? 'Muted' : `${volumePercent}%`}
-              </Text>
-            </View>
+            <SmoothVolumeSlider
+              volume={volume}
+              isMuted={isMuted}
+              onVolumeChange={setPlayerVolume}
+              onToggleMute={toggleMute}
+            />
           </ScrollView>
         )}
 

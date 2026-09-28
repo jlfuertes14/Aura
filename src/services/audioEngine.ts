@@ -30,6 +30,8 @@ class AudioEngine {
   private lastKnownDuration: number = 0;
   private lastReportTime: number = 0;
   private isAudioPlaying: boolean = false;
+  private currentMetadata: AudioMetadata | null = null;
+  private lockScreenInitializedForTrack: boolean = false;
 
   /**
    * Configures native audio session for background playback and lock-screen continuation.
@@ -84,6 +86,8 @@ class AudioEngine {
       }
       this.player = null;
       this.lastUri = null;
+      this.currentMetadata = null;
+      this.lockScreenInitializedForTrack = false;
     }
   }
 
@@ -91,6 +95,7 @@ class AudioEngine {
    * Updates metadata (title, artist, album, artwork) displayed on lockscreen & notification shade.
    */
   public updateLockScreen(metadata: AudioMetadata): void {
+    this.currentMetadata = metadata;
     if (this.player) {
       try {
         this.player.updateLockScreenMetadata(metadata);
@@ -111,6 +116,8 @@ class AudioEngine {
   ): Promise<void> {
     await this.configureAudioMode();
     this.statusCallback = onStatusUpdate;
+    this.currentMetadata = metadata || null;
+    this.lockScreenInitializedForTrack = false;
 
     // If same URI is loaded, toggle or resume
     if (this.player && this.lastUri === uri) {
@@ -221,6 +228,19 @@ class AudioEngine {
     this.lastKnownPosition = position;
     this.lastKnownDuration = duration;
     this.lastReportTime = Date.now();
+
+    // Once duration is resolved (> 0), re-sync lock screen controls so Android MediaSession gets the accurate timeline and progress bar
+    if (duration > 0 && !this.lockScreenInitializedForTrack && this.currentMetadata && this.player) {
+      this.lockScreenInitializedForTrack = true;
+      try {
+        this.player.setActiveForLockScreen(true, this.currentMetadata, {
+          showSeekForward: true,
+          showSeekBackward: true,
+        });
+      } catch (lockErr) {
+        console.warn('AudioEngine lock screen timeline synchronization warning:', lockErr);
+      }
+    }
 
     if (isPlaying) {
       this.startHighResTicker();
