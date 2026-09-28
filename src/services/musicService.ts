@@ -297,24 +297,163 @@ export async function resolveYouTubeAudioStream(
 }
 
 /**
- * Fetches and extracts a Spotify playlist via the companion backend API.
- * Returns parsed playlist metadata and tracks without requiring Spotify API credentials.
+ * Fetches the authentic high-resolution (640x640) album cover for a specific Spotify track.
+ * Uses Spotify's public oEmbed service with automatic dimension upgrading.
+ */
+export async function fetchSpotifyTrackArtwork(spotifyUriOrTrackId: string): Promise<string | null> {
+  const match = spotifyUriOrTrackId.match(/(?:track[:/])?([a-zA-Z0-9]{22})/);
+  const trackId = match ? match[1] : spotifyUriOrTrackId;
+  if (!trackId) return null;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/track/${trackId}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.thumbnail_url && typeof data.thumbnail_url === 'string') {
+        // Upgrade from 300x300 (1e02) to pristine 640x640 (b273)
+        return data.thumbnail_url.replace('ab67616d00001e02', 'ab67616d0000b273');
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Direct client-side Spotify playlist metadata extractor.
+ * Functions 100% offline from the companion server/Render by parsing Spotify's public embed page directly.
+ */
+export async function fetchSpotifyPlaylistDirect(playlistUrl: string): Promise<SpotifyPlaylistResult> {
+  const match = playlistUrl.match(/(?:playlist\/|spotify:playlist:)([a-zA-Z0-9]+)/);
+  if (!match) {
+    throw new Error('Invalid Spotify playlist URL or ID');
+  }
+  const playlistId = match[1];
+  const embedUrl = `https://open.spotify.com/embed/playlist/${playlistId}`;
+
+  const res = await fetch(embedUrl, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+    },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to load Spotify playlist (HTTP ${res.status})`);
+  }
+
+  const html = await res.text();
+  const idx = html.indexOf('__NEXT_DATA__');
+  if (idx === -1) {
+    throw new Error('Spotify playlist metadata not found. Ensure playlist is public.');
+  }
+  const start = html.indexOf('{', idx);
+  const end = html.indexOf('</script>', start);
+  const data = JSON.parse(html.slice(start, end));
+  const entity = data.props?.pageProps?.state?.data?.entity;
+  if (!entity) {
+    throw new Error('Spotify playlist entity not found or playlist is private');
+  }
+
+  const playlistName = entity.name || 'Spotify Playlist';
+  const coverUrl =
+    entity.visualIdentity?.image?.[2]?.url ||
+    entity.visualIdentity?.image?.[1]?.url ||
+    entity.visualIdentity?.image?.[0]?.url ||
+    entity.coverArt?.sources?.[0]?.url ||
+    '';
+  const rawTracks = entity.trackList || [];
+
+  // Fetch individual album artwork for each track via Spotify's public oEmbed service in small batches
+  const trackCoverMap = new Map<string, string>();
+  const batchSize = 6;
+  for (let i = 0; i < rawTracks.length; i += batchSize) {
+    const batch = rawTracks.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map(async (item: any) => {
+        const trackIdMatch = (item.uri || '').match(/track:([a-zA-Z0-9]+)/);
+        if (!trackIdMatch) return;
+        const id = trackIdMatch[1];
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 4000);
+          const oembedRes = await fetch(
+            `https://open.spotify.com/oembed?url=https://open.spotify.com/track/${id}`,
+            { signal: controller.signal }
+          );
+          clearTimeout(timeout);
+          if (oembedRes.ok) {
+            const oembedData = await oembedRes.json();
+            if (oembedData.thumbnail_url) {
+              const highRes = oembedData.thumbnail_url.replace('ab67616d00001e02', 'ab67616d0000b273');
+              trackCoverMap.set(item.uri, highRes);
+            }
+          }
+        } catch {
+          // Unresolved covers will be resolved on-demand
+        }
+      })
+    );
+  }
+
+  const tracks: Track[] = rawTracks.map((item: any, trackIdx: number) => {
+    const trackTitle = item.title || 'Track';
+    const trackArtist = item.subtitle || 'Various Artists';
+    const durationSec = Math.round((item.duration || 180000) / 1000);
+    // Explicitly keep individual artwork distinct; never poison track.artworkUrl with the playlist collage
+    const individualCover = trackCoverMap.get(item.uri) || '';
+
+    return {
+      id: `sp-${playlistId}-${trackIdx}-${Date.now()}`,
+      title: trackTitle,
+      artist: trackArtist,
+      album: playlistName,
+      duration: durationSec,
+      artworkUrl: individualCover,
+      audioUrl: '', // Resolved on-demand when clicked
+      isDownloaded: false,
+      source: 'spotify',
+      spotifyUri: item.uri || '',
+    };
+  });
+
+  return {
+    id: playlistId,
+    name: playlistName,
+    description: entity.description || `Imported Spotify playlist (${tracks.length} tracks)`,
+    coverUrl,
+    trackCount: tracks.length,
+    tracks,
+  };
+}
+
+/**
+ * Fetches and extracts a Spotify playlist via the companion backend API with automatic
+ * seamless client-side direct fallback if companion server or Render is sleeping or unreachable.
  */
 export async function fetchSpotifyPlaylist(playlistUrl: string): Promise<SpotifyPlaylistResult> {
-  const apiPath = `/api/spotify/playlist?url=${encodeURIComponent(playlistUrl)}`;
   console.log(`[SPOTIFY SERVICE] Fetching Spotify playlist:`, playlistUrl);
 
-  const response = await fetchApiWithFallback(apiPath);
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `Failed to fetch Spotify playlist (HTTP ${response.status})`);
+  // 1. Try companion or cloud backend API first
+  try {
+    const apiPath = `/api/spotify/playlist?url=${encodeURIComponent(playlistUrl)}`;
+    const response = await fetchApiWithFallback(apiPath);
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success && data.playlist) {
+        return data.playlist as SpotifyPlaylistResult;
+      }
+    }
+  } catch (backendErr: any) {
+    console.warn('[SPOTIFY SERVICE] Backend API unreachable, falling back to direct client extraction:', backendErr?.message);
   }
 
-  const data = await response.json();
-  if (data.success && data.playlist) {
-    return data.playlist as SpotifyPlaylistResult;
-  }
-  throw new Error(data.error || 'Failed to parse Spotify playlist');
+  // 2. Direct client extraction fallback
+  return fetchSpotifyPlaylistDirect(playlistUrl);
 }
 
 export interface MatchResolvedTrack {
@@ -351,6 +490,21 @@ export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrac
   const query = `${track.artist} ${track.title}`.trim();
   console.log(`[RESOLVE SERVICE] Resolving audio stream for "${query}"`);
 
+  // Check if current artwork is missing or was mistakenly set to the playlist collage (ab67706f)
+  const isCollageOrEmpty = !track.artworkUrl ||
+    track.artworkUrl.includes('ab67706f') ||
+    track.artworkUrl.includes('empty_library');
+
+  let trackArtwork = track.artworkUrl;
+  if (track.source === 'spotify' && isCollageOrEmpty && track.spotifyUri) {
+    try {
+      const freshSpotifyArt = await fetchSpotifyTrackArtwork(track.spotifyUri);
+      if (freshSpotifyArt) {
+        trackArtwork = freshSpotifyArt;
+      }
+    } catch {}
+  }
+
   // 1. Try on-device native search first
   try {
     const searchRes = await searchYouTube(query);
@@ -359,9 +513,11 @@ export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrac
       if (bestMatch.videoId) {
         console.log(`[RESOLVE SERVICE] On-device search matched: "${bestMatch.title}" (${bestMatch.videoId})`);
         const resolved = await resolveYouTubeAudioStream(bestMatch.videoId, bestMatch.title);
-        const finalArtwork = (track.source === 'spotify' && track.artworkUrl)
-          ? track.artworkUrl
-          : (track.artworkUrl || bestMatch.thumbnailUrl);
+        
+        // Never keep the playlist collage as the track's individual album art
+        const finalArtwork = trackArtwork && !trackArtwork.includes('ab67706f')
+          ? trackArtwork
+          : (bestMatch.thumbnailUrl || track.artworkUrl);
 
         return {
           videoId: bestMatch.videoId,
@@ -386,9 +542,9 @@ export async function resolveTrackAudio(track: Track): Promise<MatchResolvedTrac
     if (response.ok) {
       const data = await response.json();
       if (data.success && data.videoId) {
-        const finalArtwork = (track.source === 'spotify' && track.artworkUrl)
-          ? track.artworkUrl
-          : (track.artworkUrl || data.artworkUrl);
+        const finalArtwork = trackArtwork && !trackArtwork.includes('ab67706f')
+          ? trackArtwork
+          : (data.artworkUrl || track.artworkUrl);
 
         return {
           videoId: data.videoId,

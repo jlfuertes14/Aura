@@ -771,7 +771,7 @@ function handleApiRequest(req, res, next) {
         // Fetch individual album artwork for each track via Spotify's public oEmbed service in parallel batches
         console.log(`[SPOTIFY IMPORT] Fetching individual album art for ${rawTracks.length} tracks...`);
         const trackCoverMap = new Map();
-        const batchSize = 12;
+        const batchSize = 8;
         for (let i = 0; i < rawTracks.length; i += batchSize) {
           const batch = rawTracks.slice(i, i + batchSize);
           await Promise.all(
@@ -781,7 +781,7 @@ function handleApiRequest(req, res, next) {
               const id = trackIdMatch[1];
               try {
                 const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 3000);
+                const timeout = setTimeout(() => controller.abort(), 5000);
                 const oembedRes = await fetch(
                   `https://open.spotify.com/oembed?url=https://open.spotify.com/track/${id}`,
                   { signal: controller.signal }
@@ -790,11 +790,12 @@ function handleApiRequest(req, res, next) {
                 if (oembedRes.ok) {
                   const oembedData = await oembedRes.json();
                   if (oembedData.thumbnail_url) {
-                    trackCoverMap.set(item.uri, oembedData.thumbnail_url);
+                    const highRes = oembedData.thumbnail_url.replace('ab67616d00001e02', 'ab67616d0000b273');
+                    trackCoverMap.set(item.uri, highRes);
                   }
                 }
               } catch (e) {
-                // Fallback to playlist cover on timeout / error
+                // Fallback to on-demand resolution
               }
             })
           );
@@ -808,7 +809,8 @@ function handleApiRequest(req, res, next) {
           const trackTitle = item.title || 'Track';
           const trackArtist = item.subtitle || 'Various Artists';
           const durationSec = Math.round((item.duration || 180000) / 1000);
-          const individualCover = trackCoverMap.get(item.uri) || coverUrl;
+          // Never default individual track artwork to the playlist collage (coverUrl)
+          const individualCover = trackCoverMap.get(item.uri) || '';
           return {
             id: `sp-${playlistId}-${idx}-${Date.now()}`,
             title: trackTitle,

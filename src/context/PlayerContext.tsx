@@ -58,6 +58,7 @@ interface PlayerContextType {
   addTrackToPlaylist: (playlistId: string, track: Track) => Promise<void>;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => Promise<void>;
   importSpotifyPlaylist: (url: string) => Promise<Playlist>;
+  updatePlaylistTracks: (playlistId: string, updatedTracks: Track[]) => Promise<void>;
   addToQueue: (track: Track) => void;
   playNext: (track: Track) => void;
   reorderQueue: (fromIndex: number, toIndex: number) => void;
@@ -148,6 +149,41 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     []
   );
 
+  const updateTrackInPlaylists = useCallback((updatedTrack: Track) => {
+    setPlaylists((prev) => {
+      let changed = false;
+      const nextPlaylists = prev.map((p) => {
+        const hasTrack = p.tracks.some(
+          (t) => t.id === updatedTrack.id || (t.spotifyUri && t.spotifyUri === updatedTrack.spotifyUri)
+        );
+        if (!hasTrack) return p;
+        changed = true;
+        return {
+          ...p,
+          tracks: p.tracks.map((t) => {
+            if (t.id === updatedTrack.id || (t.spotifyUri && t.spotifyUri === updatedTrack.spotifyUri)) {
+              return { ...t, ...updatedTrack };
+            }
+            return t;
+          }),
+        };
+      });
+      if (changed) {
+        savePlaylists(nextPlaylists).catch(() => {});
+        return nextPlaylists;
+      }
+      return prev;
+    });
+  }, []);
+
+  const updatePlaylistTracks = async (playlistId: string, updatedTracks: Track[]): Promise<void> => {
+    setPlaylists((prev) => {
+      const nextPlaylists = prev.map((p) => (p.id === playlistId ? { ...p, tracks: updatedTracks } : p));
+      savePlaylists(nextPlaylists).catch(() => {});
+      return nextPlaylists;
+    });
+  };
+
   const playTrack = async (track: Track, newQueue?: Track[]) => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -174,10 +210,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         try {
           const matched = await resolveTrackAudio(activeTrack);
           if (matched && matched.audioUrl) {
-            // Preserve official Spotify album cover rather than replacing with YouTube thumbnail
-            const resolvedArtwork = (activeTrack.source === 'spotify' && activeTrack.artworkUrl)
+            // Check if existing artwork is empty, placeholder, or the playlist collage (ab67706f)
+            const isCollageOrEmpty = !activeTrack.artworkUrl ||
+              activeTrack.artworkUrl.includes('ab67706f') ||
+              activeTrack.artworkUrl === 'synthwave_grid' ||
+              activeTrack.artworkUrl === 'empty_library';
+
+            const resolvedArtwork = (!isCollageOrEmpty && activeTrack.source === 'spotify' && activeTrack.artworkUrl)
               ? activeTrack.artworkUrl
-              : (activeTrack.artworkUrl || matched.artworkUrl || 'synthwave_grid');
+              : (matched.artworkUrl || activeTrack.artworkUrl || 'synthwave_grid');
 
             activeTrack = {
               ...activeTrack,
@@ -187,6 +228,11 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               artworkUrl: resolvedArtwork,
               palette: matched.palette || activeTrack.palette,
             };
+
+            // If artwork was upgraded from collage or empty, update it across all stored playlists
+            if (isCollageOrEmpty && resolvedArtwork && !resolvedArtwork.includes('ab67706f')) {
+              updateTrackInPlaylists(activeTrack);
+            }
           }
         } catch (err) {
           console.error('Failed to match YouTube stream for track:', err);
@@ -242,7 +288,8 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           albumTitle: activeTrack.album || 'Aura Music',
           artworkUrl: validArtwork,
         };
-        await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true, metadata);
+        // Pass activeTrack.duration so audioEngine configures accurate notification player timeline
+        await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true, metadata, activeTrack.duration || 0);
         setIsPlaying(true);
       }
     } catch (error) {
@@ -740,6 +787,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         addTrackToPlaylist,
         removeTrackFromPlaylist,
         importSpotifyPlaylist,
+        updatePlaylistTracks,
         addToQueue,
         playNext,
         reorderQueue,

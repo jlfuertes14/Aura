@@ -1,5 +1,4 @@
-// Library Screen: Offline Downloaded MP3s Manager, Playlists & Spotify Playlist Importer
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -45,6 +44,7 @@ import {
   EMPTY_LIBRARY_ARTWORK,
   resolveArtworkSource,
   fetchSpotifyPlaylist,
+  fetchSpotifyTrackArtwork,
 } from '../services/musicService';
 import { Playlist, Track, SpotifyPlaylistResult } from '../types/music';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
@@ -70,6 +70,7 @@ export const LibraryScreen: React.FC = () => {
     deletePlaylist,
     updatePlaylistCover,
     importSpotifyPlaylist,
+    updatePlaylistTracks,
   } = usePlayer();
 
   const statusBarHeight = Platform.OS === 'android' ? (RNStatusBar.currentHeight || 28) : 0;
@@ -96,6 +97,57 @@ export const LibraryScreen: React.FC = () => {
   const selectedPlaylist = selectedPlaylistId
     ? playlists.find((p) => p.id === selectedPlaylistId) || null
     : null;
+
+  // Background enricher for Spotify playlist tracks that have missing or collage artwork
+  useEffect(() => {
+    if (!selectedPlaylist || !selectedPlaylist.tracks || selectedPlaylist.tracks.length === 0) return;
+
+    const tracksNeedingArt = selectedPlaylist.tracks.filter(
+      (t) =>
+        t.source === 'spotify' &&
+        t.spotifyUri &&
+        (!t.artworkUrl || t.artworkUrl.includes('ab67706f') || t.artworkUrl === selectedPlaylist.coverUrl)
+    );
+
+    if (tracksNeedingArt.length === 0) return;
+
+    let isMounted = true;
+
+    const enrichArtworks = async () => {
+      const updatedMap = new Map<string, string>();
+      const batchSize = 2; // Gentle concurrency to avoid Spotify rate limiting
+      for (let i = 0; i < tracksNeedingArt.length; i += batchSize) {
+        if (!isMounted) break;
+        const batch = tracksNeedingArt.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (trk) => {
+            if (!trk.spotifyUri) return;
+            const art = await fetchSpotifyTrackArtwork(trk.spotifyUri);
+            if (art && isMounted) {
+              updatedMap.set(trk.id, art);
+            }
+          })
+        );
+        if (i + batchSize < tracksNeedingArt.length) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      }
+
+      if (isMounted && updatedMap.size > 0) {
+        const enrichedTracks = selectedPlaylist.tracks.map((t) => {
+          const freshArt = updatedMap.get(t.id);
+          return freshArt ? { ...t, artworkUrl: freshArt } : t;
+        });
+        await updatePlaylistTracks(selectedPlaylist.id, enrichedTracks);
+      }
+    };
+
+    enrichArtworks().catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedPlaylist?.id, selectedPlaylist?.tracks.length]);
 
   const handleDeletePlaylist = (playlist: Playlist) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});

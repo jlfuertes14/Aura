@@ -32,6 +32,7 @@ class AudioEngine {
   private isAudioPlaying: boolean = false;
   private currentMetadata: AudioMetadata | null = null;
   private lockScreenInitializedForTrack: boolean = false;
+  private fallbackDuration: number = 0;
 
   /**
    * Configures native audio session for background playback and lock-screen continuation.
@@ -88,6 +89,7 @@ class AudioEngine {
       this.lastUri = null;
       this.currentMetadata = null;
       this.lockScreenInitializedForTrack = false;
+      this.fallbackDuration = 0;
     }
   }
 
@@ -112,12 +114,17 @@ class AudioEngine {
     uri: string,
     onStatusUpdate: PlaybackCallback,
     shouldPlay: boolean = true,
-    metadata?: AudioMetadata
+    metadata?: AudioMetadata,
+    knownDuration?: number
   ): Promise<void> {
     await this.configureAudioMode();
     this.statusCallback = onStatusUpdate;
     this.currentMetadata = metadata || null;
     this.lockScreenInitializedForTrack = false;
+    this.fallbackDuration = (typeof knownDuration === 'number' && Number.isFinite(knownDuration) && knownDuration > 0)
+      ? knownDuration
+      : 0;
+    this.lastKnownDuration = this.fallbackDuration;
 
     // If same URI is loaded, toggle or resume
     if (this.player && this.lastUri === uri) {
@@ -150,11 +157,14 @@ class AudioEngine {
       player.volume = this.volumeLevel;
 
       // Enable Android Notification Player & Lock Screen controls
+      // Pass isLiveStream: false so Android SystemUI does not strip COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM
+      // and properly activates the seekbar / progress timeline on streaming playback
       if (metadata) {
         try {
           player.setActiveForLockScreen(true, metadata, {
             showSeekForward: true,
             showSeekBackward: true,
+            isLiveStream: false,
           });
         } catch (lockErr) {
           console.warn('AudioEngine lock screen setup warning:', lockErr);
@@ -218,24 +228,29 @@ class AudioEngine {
     const position = typeof rawPos === 'number' && Number.isFinite(rawPos)
       ? rawPos
       : 0;
-    const duration = typeof rawDur === 'number' && Number.isFinite(rawDur)
+    const parsedDuration = typeof rawDur === 'number' && Number.isFinite(rawDur)
       ? rawDur
       : 0;
+    const effectiveDuration = parsedDuration > 0
+      ? parsedDuration
+      : (this.fallbackDuration > 0 ? this.fallbackDuration : 0);
+
     const isBuffering = Boolean(status.isBuffering);
     const didJustFinish = Boolean(status.didJustFinish);
 
     this.isAudioPlaying = isPlaying;
     this.lastKnownPosition = position;
-    this.lastKnownDuration = duration;
+    this.lastKnownDuration = effectiveDuration;
     this.lastReportTime = Date.now();
 
     // Once duration is resolved (> 0), re-sync lock screen controls so Android MediaSession gets the accurate timeline and progress bar
-    if (duration > 0 && !this.lockScreenInitializedForTrack && this.currentMetadata && this.player) {
+    if (effectiveDuration > 0 && !this.lockScreenInitializedForTrack && this.currentMetadata && this.player) {
       this.lockScreenInitializedForTrack = true;
       try {
         this.player.setActiveForLockScreen(true, this.currentMetadata, {
           showSeekForward: true,
           showSeekBackward: true,
+          isLiveStream: false,
         });
       } catch (lockErr) {
         console.warn('AudioEngine lock screen timeline synchronization warning:', lockErr);
@@ -252,7 +267,7 @@ class AudioEngine {
       this.statusCallback({
         isPlaying,
         position: Math.max(0, position),
-        duration: Math.max(0, duration),
+        duration: Math.max(0, effectiveDuration),
         isBuffering,
         didJustFinish,
       });
