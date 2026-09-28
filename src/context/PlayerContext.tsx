@@ -16,7 +16,6 @@ import {
   savePlaylists,
 } from '../services/storageService';
 import { CURATED_TRACKS, resolveTrackAudio, resolveYouTubeAudioStream, fetchSpotifyPlaylist } from '../services/musicService';
-import { streamCacheService } from '../services/streamCacheService';
 import { fetchLyrics } from '../services/lyricsService';
 
 interface PlayerContextType {
@@ -192,20 +191,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       let activeTrack = track;
 
-      // 1. Check if track already has a cached stream file on local storage
-      if (!activeTrack.localUri) {
-        try {
-          const cachedStreamUri = await streamCacheService.getCachedAudio(activeTrack.id, activeTrack.videoId);
-          if (cachedStreamUri) {
-            activeTrack = {
-              ...activeTrack,
-              localUri: cachedStreamUri,
-            };
-          }
-        } catch (cacheErr) {
-          console.warn('Stream cache lookup note:', cacheErr);
-        }
-      }
+
 
       // On-demand YouTube audio resolver for tracks needing a direct stream URL
       const isDirectStream = !!activeTrack.audioUrl && (
@@ -309,21 +295,7 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true, metadata, activeTrack.duration || 0);
         setIsPlaying(true);
 
-        // Background stream audio caching and lyrics prefetching:
-        // If track is streamed remotely, automatically cache it locally so that
-        // replaying or looping uses local flash storage instead of heating up the device radio & CPU
-        if (!activeTrack.localUri && activeTrack.audioUrl && activeTrack.audioUrl.startsWith('http')) {
-          streamCacheService.cacheStreamAudio(
-            activeTrack.id,
-            activeTrack.audioUrl,
-            activeTrack.videoId,
-            activeTrack.title,
-            activeTrack.artist,
-            activeTrack.duration
-          ).catch((cacheErr) => {
-            console.warn('Background stream caching note:', cacheErr);
-          });
-        }
+
 
         // Pre-fetch & persistently cache synchronized lyrics in background
         fetchLyrics(activeTrack.title, activeTrack.artist, activeTrack.duration, activeTrack.id).catch(() => {});

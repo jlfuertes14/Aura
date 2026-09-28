@@ -36,6 +36,15 @@ export async function initStorage(): Promise<void> {
     if (!artworkDirInfo.exists) {
       await FileSystem.makeDirectoryAsync(ARTWORK_DIR, { intermediates: true });
     }
+
+    // Clean up any legacy stream cache artifacts
+    if (FileSystem.cacheDirectory) {
+      const streamCacheDir = `${FileSystem.cacheDirectory}stream_cache/`;
+      const streamCacheInfo = await FileSystem.getInfoAsync(streamCacheDir);
+      if (streamCacheInfo.exists) {
+        await FileSystem.deleteAsync(streamCacheDir, { idempotent: true });
+      }
+    }
   } catch (error) {
     console.error('Failed to initialize native storage directories:', error);
   }
