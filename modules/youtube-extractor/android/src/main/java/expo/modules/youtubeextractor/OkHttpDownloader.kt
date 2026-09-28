@@ -59,6 +59,8 @@ class OkHttpDownloader private constructor(private val client: OkHttpClient) : D
         }
     }
 
+    fun getClient(): OkHttpClient = client
+
 
     override fun execute(request: Request): Response {
         val httpMethod = request.httpMethod()

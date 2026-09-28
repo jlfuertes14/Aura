@@ -127,8 +127,41 @@ export async function searchYouTube(query: string): Promise<SearchResponse> {
   };
 }
 
+export interface DownloadToFileResult {
+  success: boolean;
+  bytesWritten?: number;
+  error?: string;
+}
+
+/**
+ * Downloads a media stream URL directly to a local file using Android OkHttp native client.
+ */
+export async function downloadToFile(
+  url: string,
+  destinationPath: string
+): Promise<DownloadToFileResult> {
+  if (nativeModule && typeof nativeModule.downloadToFile === 'function') {
+    try {
+      const res = await nativeModule.downloadToFile(url, destinationPath);
+      return res as DownloadToFileResult;
+    } catch (err: any) {
+      console.warn('[YouTubeExtractor] Native download error:', err.message);
+      return {
+        success: false,
+        error: err.message || 'Native download failed',
+      };
+    }
+  }
+
+  return {
+    success: false,
+    error: 'Native downloader unavailable on this platform',
+  };
+}
+
 export default {
   extractAudioStream,
   searchYouTube,
+  downloadToFile,
 };
 

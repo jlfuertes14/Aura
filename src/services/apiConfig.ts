@@ -29,11 +29,11 @@ export function getCustomServerHost(): string | null {
   return memoryCustomHost;
 }
 /**
- * Production Cloud Backend URL (Optional)
- * Left empty by default so the app uses on-device native extraction (SimpMusic engine)
- * without depending on external cloud servers or facing datacenter IP bans.
+ * Production Cloud Backend URL (Render)
+ * Used for Spotify playlist metadata imports and cloud API endpoints.
+ * Audio stream extraction remains 100% on-device (native NewPipeExtractor).
  */
-export const CLOUD_SERVER_URL: string = '';
+export const CLOUD_SERVER_URL: string = 'https://aura-rohl.onrender.com';
 
 /**
  * Gets the base URL for the backend API services.

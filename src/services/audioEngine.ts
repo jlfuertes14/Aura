@@ -1,6 +1,14 @@
 // Modern Native Audio Engine using expo-audio (Expo SDK 57 compatible)
 // Fully replaces legacy expo-av (ExponentAV) with universal Android, iOS, Expo Go & Web support
-import { createAudioPlayer, setAudioModeAsync, AudioPlayer, AudioStatus } from 'expo-audio';
+import { Platform } from 'react-native';
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  AudioPlayer,
+  AudioStatus,
+  AudioMetadata,
+  requestNotificationPermissionsAsync,
+} from 'expo-audio';
 
 export type PlaybackCallback = (status: {
   isPlaying: boolean;
@@ -34,6 +42,14 @@ class AudioEngine {
         shouldPlayInBackground: true,
         interruptionMode: 'doNotMix',
       });
+
+      // On Android 13+ (API 33+), request POST_NOTIFICATIONS so lock screen & shade media controls can display
+      if (Platform.OS === 'android') {
+        try {
+          await requestNotificationPermissionsAsync();
+        } catch {}
+      }
+
       this.isConfigured = true;
     } catch (error) {
       console.warn('Audio mode configuration warning:', error);
@@ -58,6 +74,9 @@ class AudioEngine {
 
     if (this.player) {
       try {
+        this.player.clearLockScreenControls();
+      } catch {}
+      try {
         this.player.pause();
         this.player.remove();
       } catch (err) {
@@ -69,18 +88,35 @@ class AudioEngine {
   }
 
   /**
+   * Updates metadata (title, artist, album, artwork) displayed on lockscreen & notification shade.
+   */
+  public updateLockScreen(metadata: AudioMetadata): void {
+    if (this.player) {
+      try {
+        this.player.updateLockScreenMetadata(metadata);
+      } catch (e) {
+        console.warn('Lockscreen metadata update warning:', e);
+      }
+    }
+  }
+
+  /**
    * Loads a track URI (remote stream or local file://) and begins playback.
    */
   public async loadAndPlay(
     uri: string,
     onStatusUpdate: PlaybackCallback,
-    shouldPlay: boolean = true
+    shouldPlay: boolean = true,
+    metadata?: AudioMetadata
   ): Promise<void> {
     await this.configureAudioMode();
     this.statusCallback = onStatusUpdate;
 
     // If same URI is loaded, toggle or resume
     if (this.player && this.lastUri === uri) {
+      if (metadata) {
+        this.updateLockScreen(metadata);
+      }
       if (shouldPlay) {
         this.play();
       }
@@ -104,8 +140,19 @@ class AudioEngine {
 
       const player = createAudioPlayer(audioSource, { updateInterval: 100 });
 
-
       player.volume = this.volumeLevel;
+
+      // Enable Android Notification Player & Lock Screen controls
+      if (metadata) {
+        try {
+          player.setActiveForLockScreen(true, metadata, {
+            showSeekForward: true,
+            showSeekBackward: true,
+          });
+        } catch (lockErr) {
+          console.warn('AudioEngine lock screen setup warning:', lockErr);
+        }
+      }
 
       this.statusSubscription = player.addListener(
         'playbackStatusUpdate',

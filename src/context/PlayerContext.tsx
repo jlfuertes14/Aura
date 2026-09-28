@@ -15,7 +15,7 @@ import {
   getPlaylists,
   savePlaylists,
 } from '../services/storageService';
-import { CURATED_TRACKS, resolveTrackAudio, fetchSpotifyPlaylist } from '../services/musicService';
+import { CURATED_TRACKS, resolveTrackAudio, resolveYouTubeAudioStream, fetchSpotifyPlaylist } from '../services/musicService';
 
 interface PlayerContextType {
   currentTrack: Track | null;
@@ -224,7 +224,15 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Check if track is downloaded locally on device
       const audioUri = activeTrack.localUri || activeTrack.audioUrl;
       if (audioUri) {
-        await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true);
+        const metadata = {
+          title: activeTrack.title,
+          artist: activeTrack.artist,
+          albumTitle: activeTrack.album || 'Aura Music',
+          artworkUrl: typeof activeTrack.artworkUrl === 'string' && activeTrack.artworkUrl.startsWith('http')
+            ? activeTrack.artworkUrl
+            : undefined,
+        };
+        await audioEngine.loadAndPlay(audioUri, handlePlaybackUpdate, true, metadata);
         setIsPlaying(true);
       }
     } catch (error) {
@@ -388,32 +396,34 @@ export const PlayerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     try {
       let trackToDownload = track;
-      const isDirectStream = !!trackToDownload.audioUrl && (
-        trackToDownload.audioUrl.startsWith('http') &&
-        !trackToDownload.audioUrl.includes('/api/stream') &&
-        !trackToDownload.audioUrl.includes('localhost') &&
-        !trackToDownload.audioUrl.includes('onrender.com')
-      );
 
-      const needsResolution = !trackToDownload.localUri && (
-        !trackToDownload.audioUrl ||
-        trackToDownload.source === 'spotify' ||
-        trackToDownload.audioUrl.includes('/api/stream') ||
-        !isDirectStream
-      );
-
-      if (needsResolution) {
-        const matched = await resolveTrackAudio(trackToDownload);
-        if (matched && (matched.downloadUrl || matched.audioUrl)) {
-          trackToDownload = {
-            ...trackToDownload,
-            audioUrl: matched.downloadUrl || matched.audioUrl,
-            videoId: matched.videoId || trackToDownload.videoId,
-            duration: matched.duration || trackToDownload.duration,
-          };
+      // Always resolve a fresh direct audio stream URL right before downloading
+      // to ensure the YouTube stream signature has not expired
+      if (!trackToDownload.localUri) {
+        try {
+          if (trackToDownload.videoId && trackToDownload.source !== 'spotify') {
+            const fresh = await resolveYouTubeAudioStream(trackToDownload.videoId, trackToDownload.title);
+            if (fresh && (fresh.downloadUrl || fresh.audioUrl)) {
+              trackToDownload = {
+                ...trackToDownload,
+                audioUrl: fresh.downloadUrl || fresh.audioUrl,
+              };
+            }
+          } else {
+            const matched = await resolveTrackAudio(trackToDownload);
+            if (matched && (matched.downloadUrl || matched.audioUrl)) {
+              trackToDownload = {
+                ...trackToDownload,
+                audioUrl: matched.downloadUrl || matched.audioUrl,
+                videoId: matched.videoId || trackToDownload.videoId,
+                duration: matched.duration || trackToDownload.duration,
+              };
+            }
+          }
+        } catch (resErr) {
+          console.warn('Pre-download stream resolution attempt warning:', resErr);
         }
       }
-
 
       const savedTrack = await downloadTrackToDevice(trackToDownload, (progress) => {
         setActiveDownloads((prev) => ({

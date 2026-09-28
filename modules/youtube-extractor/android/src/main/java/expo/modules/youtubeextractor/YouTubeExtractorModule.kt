@@ -85,6 +85,49 @@ class YouTubeExtractorModule : Module() {
         )
       }
     }
+
+    AsyncFunction("downloadToFile") { url: String, destinationPath: String ->
+      try {
+        val request = okhttp3.Request.Builder()
+          .url(url)
+          .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+          .header("Accept", "*/*")
+          .build()
+
+        val response = OkHttpDownloader.getInstance().getClient().newCall(request).execute()
+        if (!response.isSuccessful) {
+          mapOf(
+            "success" to false,
+            "error" to "HTTP error: ${response.code}"
+          )
+        } else {
+          val body = response.body ?: throw Exception("Empty response body")
+          val cleanPath = if (destinationPath.startsWith("file://")) {
+            destinationPath.substring(7)
+          } else {
+            destinationPath
+          }
+          val file = java.io.File(cleanPath)
+          file.parentFile?.mkdirs()
+
+          file.outputStream().use { output ->
+            body.byteStream().use { input ->
+              input.copyTo(output)
+            }
+          }
+
+          mapOf(
+            "success" to true,
+            "bytesWritten" to file.length()
+          )
+        }
+      } catch (e: Exception) {
+        mapOf(
+          "success" to false,
+          "error" to (e.message ?: "Failed to download file")
+        )
+      }
+    }
   }
 }
 

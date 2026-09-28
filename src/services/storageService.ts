@@ -5,6 +5,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Track, Playlist } from '../types/music';
 import { fetchLyrics, saveOfflineLyrics, deleteOfflineLyrics } from './lyricsService';
+import { downloadToFile } from '../../modules/youtube-extractor';
 
 const STORAGE_KEYS = {
   DOWNLOADED_TRACKS: '@music_player/downloaded_tracks',
@@ -109,37 +110,61 @@ export async function downloadTrackToDevice(
   await initStorage();
 
   const safeId = track.id.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const targetFileUri = `${MUSIC_DIR}${safeId}.mp3`;
+  // Use .m4a format matching the native AAC audio container extracted from YouTube
+  const targetFileUri = `${MUSIC_DIR}${safeId}.m4a`;
   const targetArtworkUri = `${ARTWORK_DIR}${safeId}.jpg`;
 
   try {
-    // 1. Download audio file with real-time percentage progress
-    const downloadResumable = FileSystem.createDownloadResumable(
-      track.audioUrl,
-      targetFileUri,
-      {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        },
-      },
+    let downloadSucceeded = false;
 
-      (downloadProgress) => {
-        const total = downloadProgress.totalBytesExpectedToWrite;
-        const written = downloadProgress.totalBytesWritten;
-        if (total > 0 && onProgress) {
-          const progress = written / total;
-          onProgress(Math.min(progress, 0.99));
+    // 1. On Android, try native OkHttp downloader first (same network stack & session cookies)
+    if (Platform.OS === 'android') {
+      try {
+        if (onProgress) onProgress(0.15);
+        const nativeRes = await downloadToFile(track.audioUrl, targetFileUri);
+        if (nativeRes && nativeRes.success && (nativeRes.bytesWritten || 0) > 50000) {
+          downloadSucceeded = true;
+          if (onProgress) onProgress(0.95);
         }
+      } catch (nativeErr) {
+        console.warn('Native download attempt failed, falling back to FileSystem:', nativeErr);
       }
-    );
-
-    const downloadResult = await downloadResumable.downloadAsync();
-    if (!downloadResult || !downloadResult.uri) {
-      throw new Error('Download failed: No URI returned from FileSystem');
     }
 
-    // 2. Cache artwork locally if remote
+    // 2. Fallback to FileSystem.createDownloadResumable if native download did not complete
+    if (!downloadSucceeded) {
+      const downloadResumable = FileSystem.createDownloadResumable(
+        track.audioUrl,
+        targetFileUri,
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+          },
+        },
+        (downloadProgress) => {
+          const total = downloadProgress.totalBytesExpectedToWrite;
+          const written = downloadProgress.totalBytesWritten;
+          if (total > 0 && onProgress) {
+            const progress = written / total;
+            onProgress(Math.min(progress, 0.99));
+          }
+        }
+      );
+
+      const downloadResult = await downloadResumable.downloadAsync();
+      if (!downloadResult || !downloadResult.uri) {
+        throw new Error('Download failed: No URI returned from FileSystem');
+      }
+
+      if (downloadResult.status && (downloadResult.status < 200 || downloadResult.status >= 300)) {
+        await FileSystem.deleteAsync(targetFileUri, { idempotent: true }).catch(() => {});
+        throw new Error(`Download failed with HTTP status ${downloadResult.status}`);
+      }
+    }
+
+    // 3. Cache artwork locally if remote
     let localArtworkUri = track.artworkUrl;
     if (track.artworkUrl && track.artworkUrl.startsWith('http')) {
       try {
@@ -152,15 +177,19 @@ export async function downloadTrackToDevice(
       }
     }
 
-    // 3. Inspect saved file size
-    const fileInfo = await FileSystem.getInfoAsync(downloadResult.uri);
-    const sizeFormatted = fileInfo.exists && (fileInfo as any).size ? formatBytes((fileInfo as any).size) : '3.8 MB';
+    // 4. Verify saved file integrity (real audio files are always > 50 KB)
+    const fileInfo = await FileSystem.getInfoAsync(targetFileUri);
+    if (!fileInfo.exists || ((fileInfo as any).size && (fileInfo as any).size < 50000)) {
+      await FileSystem.deleteAsync(targetFileUri, { idempotent: true }).catch(() => {});
+      throw new Error('Download failed: received empty or invalid audio stream');
+    }
+    const sizeFormatted = (fileInfo as any).size ? formatBytes((fileInfo as any).size) : '3.8 MB';
 
-    // 4. Construct updated Track object with native file URI
+    // 5. Construct updated Track object with native file URI
     const downloadedTrack: Track = {
       ...track,
       isDownloaded: true,
-      localUri: downloadResult.uri,
+      localUri: targetFileUri,
       artworkUrl: localArtworkUri,
       fileSize: sizeFormatted,
       downloadDate: new Date().toISOString(),
