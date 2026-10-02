@@ -28,7 +28,7 @@ index 86880d9..cec4baa 100644
  
  enum class AndroidOutputFormat(val value: String) : Enumerable {
 diff --git a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
-index 196a5d5..ad98c3d 100644
+index 196a5d5..d34ba3b 100644
 --- a/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
 +++ b/node_modules/expo-audio/android/src/main/java/expo/modules/audio/service/AudioControlsService.kt
 @@ -90,6 +90,8 @@ class AudioControlsService : MediaSessionService() {
@@ -146,7 +146,17 @@ index 196a5d5..ad98c3d 100644
  
      session.setCustomLayout(mediaButtons)
      session.setMediaButtonPreferences(mediaButtons)
-@@ -367,11 +363,11 @@ class AudioControlsService : MediaSessionService() {
+@@ -362,20 +358,25 @@ class AudioControlsService : MediaSessionService() {
+     player?.isActiveForLockScreen = true
+ 
+     if (player != null) {
+-      mediaSession?.release()
++      mediaSession?.let {
++        removeSession(it)
++        it.release()
++      }
++      mediaSession = null
+       sessionMetadataPlayer = null
  
        appContext?.mainQueue?.launch {
          val context = appContext?.reactContext ?: return@launch
@@ -154,13 +164,40 @@ index 196a5d5..ad98c3d 100644
 +        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options), WeakReference(this@AudioControlsService)).apply {
            updateMetadata(metadata)
          }
++        player.mediaSession.release()
          val session = MediaSession.Builder(context, sessionPlayer)
 -          .setCallback(AudioMediaSessionCallback())
++          .setId("ExpoAudioControlsSession_${System.identityHashCode(player)}_${System.currentTimeMillis()}")
 +          .setCallback(AudioMediaSessionCallback(WeakReference(this@AudioControlsService)))
            .build()
  
          // Replace the basic media session with a session connected to our playback service.
-@@ -448,11 +444,11 @@ class AudioControlsService : MediaSessionService() {
+-        player.mediaSession.release()
+         player.mediaSession = session
+ 
+         addSession(session)
+@@ -415,7 +416,10 @@ class AudioControlsService : MediaSessionService() {
+     removePlayerListener()
+     currentPlayer = null
+     currentMetadata = null
+-    mediaSession?.release()
++    mediaSession?.let {
++      removeSession(it)
++      it.release()
++    }
+     mediaSession = null
+     sessionMetadataPlayer = null
+     currentPlayer?.assignBasicMediaSession()
+@@ -444,18 +448,23 @@ class AudioControlsService : MediaSessionService() {
+       currentMetadata = metadata
+       currentOptions = options
+ 
+-      mediaSession?.release()
++      mediaSession?.let {
++        removeSession(it)
++        it.release()
++      }
++      mediaSession = null
        sessionMetadataPlayer = null
        appContext?.mainQueue?.launch {
          val context = appContext?.reactContext ?: return@launch
@@ -168,13 +205,30 @@ index 196a5d5..ad98c3d 100644
 +        val sessionPlayer = MetadataInjectingPlayer(resolveSessionPlayer(player, options), WeakReference(this@AudioControlsService)).apply {
            updateMetadata(metadata)
          }
++        player.mediaSession.release()
          val session = MediaSession.Builder(context, sessionPlayer)
 -          .setCallback(AudioMediaSessionCallback())
++          .setId("ExpoAudioControlsSession_${System.identityHashCode(player)}_${System.currentTimeMillis()}")
 +          .setCallback(AudioMediaSessionCallback(WeakReference(this@AudioControlsService)))
            .build()
  
-         player.mediaSession.release()
-@@ -548,6 +544,12 @@ class AudioControlsService : MediaSessionService() {
+-        player.mediaSession.release()
+         player.mediaSession = session
+ 
+         addSession(session)
+@@ -516,7 +525,10 @@ class AudioControlsService : MediaSessionService() {
+     artworkLoadJob?.cancel()
+     artworkLoadJob = null
+     scope.cancel()
+-    mediaSession?.release()
++    mediaSession?.let {
++      removeSession(it)
++      it.release()
++    }
+     mediaSession = null
+     sessionMetadataPlayer = null
+     currentPlayer = null
+@@ -548,6 +560,12 @@ class AudioControlsService : MediaSessionService() {
        currentPlayer?.ref?.removeListener(listener)
        playbackListener = null
      }
@@ -187,7 +241,7 @@ index 196a5d5..ad98c3d 100644
    }
  
    companion object {
-@@ -559,6 +561,9 @@ class AudioControlsService : MediaSessionService() {
+@@ -559,6 +577,9 @@ class AudioControlsService : MediaSessionService() {
      const val ACTION_SEEK_FORWARD = "expo.modules.audio.action.SEEK_FORWARD"
      const val ACTION_SEEK_BACKWARD = "expo.modules.audio.action.SEEK_BACKWARD"
  

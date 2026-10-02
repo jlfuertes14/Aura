@@ -224,13 +224,16 @@ export async function fetchLyrics(
       const proxyPath = `/api/lyrics?title=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(cleanArtist)}${duration ? `&duration=${Math.round(duration)}` : ''}`;
       const proxyRes = await fetchApiWithFallback(proxyPath);
       if (proxyRes.ok) {
-        data = await proxyRes.json();
+        const json = await proxyRes.json();
+        if (json && !json.error && (json.syncedLyrics || json.plainLyrics || json.instrumental)) {
+          data = json;
+        }
       }
     } catch {
       // Quietly continue to direct LRCLIB lookup
     }
 
-    // Strategy 2: Direct LRCLIB query if proxy did not return data
+    // Strategy 2: Direct LRCLIB query if proxy did not return valid data
     if (!data) {
       const headers = {
         'User-Agent': 'MusicPlayerApp/1.0 (https://github.com/expo/music-player)',

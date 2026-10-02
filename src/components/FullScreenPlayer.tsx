@@ -54,7 +54,7 @@ import {
 import { resolveArtworkSource } from '../services/musicService';
 import { Track } from '../types/music';
 import { usePlayer } from '../context/PlayerContext';
-import { useTrackArtworkPalette, isLightBackground } from '../utils/artworkColors';
+import { useTrackArtworkPalette, isLightBackground, getLyricTheme } from '../utils/artworkColors';
 import { audioEngine } from '../services/audioEngine';
 import { AudioVisualizer } from './AudioVisualizer';
 import { colors, spacing, typography, borderRadius, layout } from '../theme/theme';
@@ -528,7 +528,8 @@ export const FullScreenPlayer: React.FC = () => {
   const palette = useTrackArtworkPalette(currentTrack);
   const pureBgColor = palette?.primary || '#121620';
   const isLightBg = isLightBackground(pureBgColor);
-  const highlightLyricColor = isLightBg ? '#000000' : '#FFFFFF';
+  const lyricTheme = getLyricTheme(palette);
+  const highlightLyricColor = lyricTheme.highlightColor;
 
   const [activeTab, setActiveTab] = useState<'player' | 'lyrics' | 'queue'>('player');
 
@@ -541,6 +542,7 @@ export const FullScreenPlayer: React.FC = () => {
   const userScrollTimeout = useRef<any>(null);
   const lineLayouts = useRef<{ [index: number]: number }>({});
   const lyricsViewportHeight = useRef<number>(500);
+  const lyricsListOffsetY = useRef<number>(90);
 
   useEffect(() => {
     if (!currentTrack) {
@@ -595,10 +597,11 @@ export const FullScreenPlayer: React.FC = () => {
     }
     const lineY = lineLayouts.current[activeLyricIndex];
     const vHeight = lyricsViewportHeight.current || 500;
+    const baseOffset = lyricsListOffsetY.current || 90;
     // Position the active line comfortably at ~38% from top of viewport
     const targetY = typeof lineY === 'number'
-      ? Math.max(0, lineY - vHeight * 0.38)
-      : Math.max(0, activeLyricIndex * 54 - vHeight * 0.38);
+      ? Math.max(0, lineY + baseOffset - vHeight * 0.38)
+      : Math.max(0, activeLyricIndex * 54 + baseOffset - vHeight * 0.38);
 
     lyricsScrollRef.current.scrollTo({
       y: targetY,
@@ -1114,7 +1117,12 @@ export const FullScreenPlayer: React.FC = () => {
               </View>
             ) : syncedLines && syncedLines.length > 0 ? (
               /* Synchronized Lyrics List */
-              <View style={styles.syncedLyricsList}>
+              <View
+                style={styles.syncedLyricsList}
+                onLayout={(e) => {
+                  lyricsListOffsetY.current = e.nativeEvent.layout.y;
+                }}
+              >
                 {syncedLines.map((line, idx) => {
                   const isActive = idx === activeLyricIndex;
                   const isPast = idx < activeLyricIndex;
@@ -1126,7 +1134,7 @@ export const FullScreenPlayer: React.FC = () => {
                       }}
                       style={({ pressed }) => [
                         styles.syncedLineRow,
-                        isActive && styles.activeSyncedLineRow,
+                        isActive && [styles.activeSyncedLineRow, { backgroundColor: lyricTheme.activeRowBg }],
                         pressed && styles.pressedSyncedLine,
                       ]}
                       onPress={() => handleLyricLinePress(line.time)}
@@ -1134,8 +1142,8 @@ export const FullScreenPlayer: React.FC = () => {
                       <Text
                         style={[
                           styles.syncedLineText,
-                          { color: 'rgba(255, 255, 255, 0.45)' },
-                          isPast && [styles.pastSyncedLineText, { color: 'rgba(255, 255, 255, 0.85)' }],
+                          { color: lyricTheme.inactiveColor },
+                          isPast && [styles.pastSyncedLineText, { color: lyricTheme.pastColor }],
                           isActive && [
                             styles.activeSyncedLineText,
                             { color: highlightLyricColor },

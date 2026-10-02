@@ -156,6 +156,14 @@ class AudioEngine {
     // Clean up previous sound instance
     await this.unload();
 
+    // Re-initialize state wiped by unload()
+    this.statusCallback = onStatusUpdate;
+    this.fallbackDuration = (typeof knownDuration === 'number' && Number.isFinite(knownDuration) && knownDuration > 0)
+      ? knownDuration
+      : (typeof metadata?.duration === 'number' && metadata.duration > 0 ? metadata.duration : 0);
+    this.lastKnownDuration = this.fallbackDuration;
+    this.currentMetadata = enrichedMetadata;
+
     try {
       const isRemote = uri.startsWith('http://') || uri.startsWith('https://');
       const audioSource = isRemote
